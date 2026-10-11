@@ -108,6 +108,19 @@ class TestScanner(unittest.TestCase):
         linux_entry = entries[1]
         self.assertFalse(linux_entry.active)
 
+    def test_parse_efibootmgr_raw_efi_path(self):
+        sample_output = (
+            "BootCurrent: 0002\n"
+            "BootOrder: 0000,0005\n"
+            r"Boot0000* Fedora	HD(1,GPT,0000003f-3190-8b95-203c-db017e000000,0x800,0x89800)/\EFI\fedora\shimx64.efi" + "\n"
+            r"Boot0005* Windows Boot Manager	HD(1,GPT,0000003f-3190-8b95-203c-db017e000000,0x800,0x89800)/\EFI\Microsoft\Boot\bootmgfw.efi57494e444f575300"
+        )
+        entries, order = SystemScanner.parse_efibootmgr_output(sample_output)
+        self.assertEqual(len(entries), 2)
+        self.assertEqual(entries[0].file_path, r"\EFI\fedora\shimx64.efi")
+        self.assertEqual(entries[1].file_path, r"\EFI\Microsoft\Boot\bootmgfw.efi")
+        self.assertTrue(entries[1].is_windows_manager())
+
     def test_inspect_windows_root(self):
         scanner = SystemScanner()
         with tempfile.TemporaryDirectory() as tmpdir:

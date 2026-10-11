@@ -455,9 +455,13 @@ class SystemScanner:
                 label = label.strip()
                 details = details.strip()
 
-                # Try to extract file path, e.g. File(\EFI\Microsoft\Boot\bootmgfw.efi)
+                # Try to extract file path, e.g. File(\EFI\Microsoft\Boot\bootmgfw.efi) or /\EFI\Microsoft\Boot\bootmgfw.efi
                 file_match = re.search(r"File\(([^)]+)\)", details)
-                file_path = file_match.group(1) if file_match else None
+                if file_match:
+                    file_path = file_match.group(1)
+                else:
+                    raw_match = re.search(r"[/\\\\]+EFI[/\\\\][^\s()]*?\.(?:efi|EFI)", details)
+                    file_path = raw_match.group(0).lstrip("/") if raw_match else None
 
                 # Extract HD partition number e.g. HD(1,GPT,...) or HD(2,MBR,...)
                 hd_match = re.search(r"HD\((\d+),", details)
