@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "redivivus"
+version = "0.1.0"
+description = "Universal Windows Bootloader Recovery Tool from Linux without WinPE"
+readme = "README.md"
+authors = [
+    { name = "Redivivus Contributors" }
+]
+license = { text = "MIT" }
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: System :: Boot",
+    "Topic :: System :: Recovery Tools",
+]
+keywords = ["windows", "bootloader", "uefi", "esp", "bcd", "recovery", "linux", "dual-boot"]
+requires-python = ">=3.8"
+dependencies = []
+
+[project.scripts]
+redivivus = "redivivus.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["redivivus*"]
