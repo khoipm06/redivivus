@@ -1,0 +1,3 @@
+"""
+Bundled BCD data templates.
+"""
