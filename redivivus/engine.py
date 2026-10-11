@@ -250,9 +250,19 @@ class RecoveryEngine:
 
                 # Step 5: Post-recovery verification
                 checks = self.verify_uefi_recovery(esp_root, plan.install_fallback_bootx64)
-
             else:
-                # Legacy PCAT recovery
+                # Step 1: Set bootable/active flag on MBR if needed
+                if plan.windows_target.partition.pttype == "dos" and not plan.windows_target.partition.is_boot_flag:
+                    disk = plan.windows_target.partition.disk
+                    pnum = plan.windows_target.partition.part_num
+                    cmd = ["parted", "-s", disk, "set", str(pnum), "boot", "on"]
+                    ret, out, err = self.deployer._run_cmd(cmd)
+                    if ret == 0:
+                        messages.append(f"Set active boot flag on {plan.windows_target.partition.device}")
+                    else:
+                        errors.append(f"Failed to set active flag via parted: {err}")
+
+                # Step 2: Deploy bootmgr and PCAT supporting assets
                 deploy_ok, actions, deploy_errs = self.deployer.deploy_legacy_boot_assets(
                     win_root=win_root,
                     boot_root=esp_root or win_root,
@@ -261,6 +271,7 @@ class RecoveryEngine:
                 messages.extend(actions)
                 errors.extend(deploy_errs)
 
+                # Step 3: Deploy and configure PCAT BCD
                 target_bcd = (esp_root or win_root) / "Boot" / "BCD"
                 bcd_ok = self.bcd.deploy_bcd(
                     target_path=target_bcd,
@@ -272,7 +283,8 @@ class RecoveryEngine:
                 else:
                     errors.append(f"Failed to generate legacy BCD hive at {target_bcd}")
 
-                checks = self.verify_legacy_recovery(esp_root or win_root)
+                # Step 4: Verification checks
+                checks = self.verify_legacy_recovery(esp_root or win_root, plan.windows_target.partition)
         except PermissionError as pe:
             errors.append(f"Permission denied during recovery operations: {pe}. Root/sudo privileges required.")
         except Exception as ex:
@@ -356,7 +368,11 @@ class RecoveryEngine:
 
         return checks
 
-    def verify_legacy_recovery(self, boot_root: Path) -> List[VerificationCheck]:
+    def verify_legacy_recovery(
+        self,
+        boot_root: Path,
+        windows_partition: Optional[PartitionInfo] = None,
+    ) -> List[VerificationCheck]:
         """Runs post-recovery integrity checks on active legacy partition."""
         checks: List[VerificationCheck] = []
 
@@ -366,7 +382,7 @@ class RecoveryEngine:
                 VerificationCheck(
                     name="Legacy bootmgr Executable",
                     passed=True,
-                    details=f"Present at {bootmgr}",
+                    details=f"Present at {bootmgr} ({bootmgr.stat().st_size} bytes)",
                 )
             )
         else:
@@ -395,6 +411,31 @@ class RecoveryEngine:
                     passed=False,
                     details="BCD hive is missing in /Boot/",
                     severity="ERROR",
+                )
+            )
+
+        # Check supporting PCAT files
+        sdi_file = boot_root / "Boot" / "boot.sdi"
+        if sdi_file.exists():
+            checks.append(
+                VerificationCheck(
+                    name="PCAT Supporting Assets (boot.sdi)",
+                    passed=True,
+                    details=f"Present at {sdi_file}",
+                    severity="INFO",
+                )
+            )
+
+        # Check MBR boot flag if partition info is known
+        if windows_partition and windows_partition.pttype == "dos":
+            checks.append(
+                VerificationCheck(
+                    name="MBR Active Boot Flag",
+                    passed=windows_partition.is_boot_flag,
+                    details=f"Partition {windows_partition.device} has boot flag active"
+                    if windows_partition.is_boot_flag
+                    else f"Partition {windows_partition.device} missing boot flag; required by legacy BIOS MBR",
+                    severity="WARNING" if not windows_partition.is_boot_flag else "INFO",
                 )
             )
 
