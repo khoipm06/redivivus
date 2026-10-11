@@ -104,8 +104,10 @@ class SystemScanner:
                 # Get mount point
                 mountpoints = dev.get("mountpoints") or []
                 mount_point = dev.get("mountpoint")
-                if not mount_point and mountpoints:
-                    mount_point = mountpoints[0]
+                if mountpoints:
+                    # Prefer clean system mount paths over transient / container / chroot paths
+                    preferred = [m for m in mountpoints if not m.startswith(("/dev/shm", "/tmp", "/var/tmp"))]
+                    mount_point = preferred[0] if preferred else mountpoints[0]
                 is_mounted = bool(mount_point)
 
                 # Check if this is an ESP partition

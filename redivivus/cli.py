@@ -15,8 +15,15 @@ from redivivus.models import BootMode, PartitionInfo, ScanReport, WindowsInstall
 from redivivus.scanner import SystemScanner
 
 
-def format_markdown_table(headers: List[str], rows: List[List[str]]) -> str:
-    """Renders a clean GitHub-flavored Markdown table."""
+def format_markdown_table(
+    headers: List[str],
+    rows: List[List[str]],
+    alignments: Optional[List[str]] = None,
+) -> str:
+    """Renders a clean, balanced GitHub-flavored Markdown table.
+    
+    alignments: Optional list containing 'left', 'center', or 'right' per column.
+    """
     if not headers:
         return ""
     col_widths = [len(h) for h in headers]
@@ -25,10 +32,33 @@ def format_markdown_table(headers: List[str], rows: List[List[str]]) -> str:
             if i < len(col_widths):
                 col_widths[i] = max(col_widths[i], len(str(val)))
 
-    header_line = "| " + " | ".join(h.ljust(col_widths[i]) for i, h in enumerate(headers)) + " |"
-    sep_line = "| " + " | ".join("-" * col_widths[i] for i in range(len(headers))) + " |"
+    # Ensure minimum column width of 3 for nice markdown separators
+    col_widths = [max(w, 3) for w in col_widths]
+
+    if not alignments:
+        alignments = ["left"] * len(headers)
+    elif len(alignments) < len(headers):
+        alignments = alignments + ["left"] * (len(headers) - len(alignments))
+
+    def align_cell(text: str, width: int, align: str) -> str:
+        s = str(text)
+        if align == "center":
+            return s.center(width)
+        elif align == "right":
+            return s.rjust(width)
+        return s.ljust(width)
+
+    def sep_cell(width: int, align: str) -> str:
+        if align == "center":
+            return ":" + "-" * (width - 2) + ":" if width >= 4 else ":-:"
+        elif align == "right":
+            return "-" * (width - 1) + ":"
+        return ":" + "-" * (width - 1)
+
+    header_line = "| " + " | ".join(align_cell(h, col_widths[i], alignments[i]) for i, h in enumerate(headers)) + " |"
+    sep_line = "| " + " | ".join(sep_cell(col_widths[i], alignments[i]) for i in range(len(headers))) + " |"
     body_lines = [
-        "| " + " | ".join(str(val).ljust(col_widths[i]) for i, val in enumerate(row)) + " |"
+        "| " + " | ".join(align_cell(val, col_widths[i], alignments[i]) for i, val in enumerate(row)) + " |"
         for row in rows
     ]
     return "\n".join([header_line, sep_line] + body_lines)
@@ -51,7 +81,8 @@ def cmd_scan(args: argparse.Namespace) -> int:
     # 1. Windows Installations Table
     print("## 1. Detected Windows Installations")
     if report.windows_installations:
-        win_headers = ["Device", "Product", "UEFI Capable", "Legacy Capable", "BCD-Template", "Mount"]
+        win_headers = ["Device", "Product", "UEFI", "Legacy", "BCD-Template", "Mount"]
+        win_aligns = ["left", "left", "center", "center", "center", "left"]
         win_rows = []
         for win in report.windows_installations:
             win_rows.append([
@@ -62,7 +93,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
                 "Found" if win.has_bcd_template else "Missing",
                 win.partition.mount_point or "Unmounted",
             ])
-        print(format_markdown_table(win_headers, win_rows))
+        print(format_markdown_table(win_headers, win_rows, win_aligns))
     else:
         print("*No Windows installations detected on accessible block devices.*")
     print()
@@ -71,6 +102,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
     print("## 2. Detected EFI System Partitions (ESP)")
     if report.esp_partitions:
         esp_headers = ["Device", "Disk", "Part #", "FSType", "Label", "Size", "Mount"]
+        esp_aligns = ["left", "left", "center", "center", "left", "right", "left"]
         esp_rows = []
         for esp in report.esp_partitions:
             esp_rows.append([
@@ -82,7 +114,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
                 esp.size_human or f"{esp.size_bytes}B",
                 esp.mount_point or "Unmounted",
             ])
-        print(format_markdown_table(esp_headers, esp_rows))
+        print(format_markdown_table(esp_headers, esp_rows, esp_aligns))
     else:
         print("*No EFI System Partitions (FAT32/ESP) found.*")
     print()
@@ -92,6 +124,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
         print("## 3. UEFI NVRAM Boot Entries")
         if report.nvram_entries:
             nvram_headers = ["Boot #", "Active", "Label", "File Path", "Is Windows"]
+            nvram_aligns = ["left", "center", "left", "left", "center"]
             nvram_rows = []
             for entry in report.nvram_entries:
                 nvram_rows.append([
@@ -101,12 +134,12 @@ def cmd_scan(args: argparse.Namespace) -> int:
                     entry.file_path or "(N/A)",
                     "Yes" if entry.is_windows_manager() else "No",
                 ])
-            print(format_markdown_table(nvram_headers, nvram_rows))
+            print(format_markdown_table(nvram_headers, nvram_rows, nvram_aligns))
             if report.current_boot_order:
                 print(f"\n**Boot Order**: `{' -> '.join(report.current_boot_order)}`")
         else:
             print("*No NVRAM entries reported or efibootmgr not accessible.*")
-        print()
+    print()
 
     return 0
 
@@ -244,11 +277,12 @@ def cmd_recover(args: argparse.Namespace) -> int:
 
         print("\n## Planned Recovery Actions")
         action_headers = ["Category", "Action Description", "Target / Command"]
+        action_aligns = ["center", "left", "left"]
         action_rows = [
             [a.category, a.description, a.command or a.target_path or ""]
             for a in plan.actions
         ]
-        print(format_markdown_table(action_headers, action_rows))
+        print(format_markdown_table(action_headers, action_rows, action_aligns))
         print()
 
         if args.dry_run:
@@ -276,11 +310,12 @@ def cmd_recover(args: argparse.Namespace) -> int:
 
         print("\n## Integrity Verification")
         check_headers = ["Check", "Status", "Details"]
+        check_aligns = ["left", "center", "left"]
         check_rows = [
             [c.name, "PASS" if c.passed else f"FAIL ({c.severity})", c.details]
             for c in result.verification_checks
         ]
-        print(format_markdown_table(check_headers, check_rows))
+        print(format_markdown_table(check_headers, check_rows, check_aligns))
         print()
 
         if result.success:
