@@ -110,7 +110,19 @@ class RecoveryEngine:
                 )
 
         else:
-            # Legacy BIOS / PCAT recovery
+            # 1. Active boot flag on partition (MBR practice)
+            disk = windows.partition.disk
+            part_num = windows.partition.part_num
+            if windows.partition.pttype == "dos" and not windows.partition.is_boot_flag:
+                actions.append(
+                    ActionItem(
+                        category="MBR",
+                        description=f"Set bootable/active flag on MBR partition {windows.partition.device}",
+                        command=f"parted -s {disk} set {part_num} boot on",
+                    )
+                )
+
+            # 2. Deploy bootmgr to root
             actions.append(
                 ActionItem(
                     category="Deploy",
@@ -118,6 +130,8 @@ class RecoveryEngine:
                     target_path=f"{windows.partition.mount_point or windows.partition.device}/bootmgr",
                 )
             )
+
+            # 3. Deploy PCAT supporting assets
             actions.append(
                 ActionItem(
                     category="Deploy",
@@ -125,6 +139,8 @@ class RecoveryEngine:
                     target_path=f"{windows.partition.mount_point or windows.partition.device}/Boot/",
                 )
             )
+
+            # 4. Deploy PCAT BCD
             actions.append(
                 ActionItem(
                     category="BCD",
