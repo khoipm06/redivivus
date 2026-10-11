@@ -120,5 +120,22 @@ class TestDeployer(unittest.TestCase):
             self.assertTrue((boot_root / "Boot" / "boot.sdi").exists())
 
 
+    def test_deploy_uefi_permission_denied(self):
+        with tempfile.TemporaryDirectory() as tmp_win:
+            win_root = Path(tmp_win)
+            self._setup_mock_windows(win_root)
+            # Use an unwritable / non-existent restricted directory
+            esp_root = Path("/proc/invalid_esp_dir")
+            success, actions, errors = self.deployer.deploy_uefi_boot_assets(
+                win_root=win_root,
+                esp_root=esp_root,
+                install_fallback=True,
+                dry_run=False,
+            )
+            self.assertFalse(success)
+            self.assertGreater(len(errors), 0)
+            self.assertTrue(any("denied" in e.lower() or "failed" in e.lower() or "error" in e.lower() for e in errors))
+
+
 if __name__ == "__main__":
     unittest.main()

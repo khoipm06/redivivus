@@ -79,21 +79,27 @@ class BcdManager:
         Deploys a BCD hive to the target destination (e.g. ESP/EFI/Microsoft/Boot/BCD or /Boot/BCD).
         Prioritizes the Windows disk's BCD-Template, then falls back to bundled canonical templates.
         """
-        target_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+        except (IOError, OSError, PermissionError):
+            return False
 
         copied = False
         if source_template and source_template.exists() and self.is_valid_hive(source_template):
             try:
                 shutil.copy2(source_template, target_path)
                 copied = True
-            except (IOError, PermissionError):
+            except (IOError, OSError, PermissionError):
                 copied = False
 
         if not copied:
             # Use bundled canonical template
             raw_bytes = get_uefi_bcd_template() if boot_mode == BootMode.UEFI else get_pcat_bcd_template()
-            with open(target_path, "wb") as f:
-                f.write(raw_bytes)
+            try:
+                with open(target_path, "wb") as f:
+                    f.write(raw_bytes)
+            except (IOError, OSError, PermissionError):
+                return False
 
         # Patch BCD parameters (ApplicationPath, SystemRoot, Description)
         self.configure_bcd(

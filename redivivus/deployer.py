@@ -60,15 +60,16 @@ class BootDeployer:
 
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         if backup_parent:
-            backup_parent.mkdir(parents=True, exist_ok=True)
             backup_path = backup_parent / f"{target_boot_dir.name}_backup_{timestamp}"
         else:
             backup_path = target_boot_dir.parent / f"{target_boot_dir.name}_backup_{timestamp}"
 
         try:
+            if backup_parent:
+                backup_parent.mkdir(parents=True, exist_ok=True)
             shutil.copytree(target_boot_dir, backup_path, symlinks=True)
             return backup_path
-        except (IOError, PermissionError):
+        except (IOError, OSError, PermissionError):
             return None
 
     def locate_windows_boot_source(self, win_root: Path, boot_mode: BootMode = BootMode.UEFI) -> Optional[Path]:
@@ -108,9 +109,13 @@ class BootDeployer:
         dest_fallback_boot = esp_root / "EFI" / "Boot"
 
         if not dry_run:
-            dest_ms_boot.mkdir(parents=True, exist_ok=True)
-            if install_fallback:
-                dest_fallback_boot.mkdir(parents=True, exist_ok=True)
+            try:
+                dest_ms_boot.mkdir(parents=True, exist_ok=True)
+                if install_fallback:
+                    dest_fallback_boot.mkdir(parents=True, exist_ok=True)
+            except (PermissionError, OSError) as pe:
+                errors.append(f"Permission denied creating directories in ESP: {pe}. Root privileges required.")
+                return False, actions, errors
 
         # 1. Copy critical EFI files
         for filename in self.UEFI_CRITICAL_FILES:
@@ -190,7 +195,11 @@ class BootDeployer:
         dest_boot_dir = boot_root / "Boot"
 
         if not dry_run:
-            dest_boot_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                dest_boot_dir.mkdir(parents=True, exist_ok=True)
+            except (PermissionError, OSError) as pe:
+                errors.append(f"Permission denied creating boot directory: {pe}. Root privileges required.")
+                return False, actions, errors
 
         # 1. Copy bootmgr to filesystem root
         bootmgr_src = self._find_file_case_insensitive(src_pcat_dir, "bootmgr")

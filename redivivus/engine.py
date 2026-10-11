@@ -183,95 +183,100 @@ class RecoveryEngine:
                 verification_checks=[],
             )
 
-        if plan.boot_mode == BootMode.UEFI:
-            if not esp_root or not esp_root.exists():
-                return RecoveryResult(
-                    success=False,
-                    plan=plan,
-                    messages=[],
-                    errors=["ESP root path does not exist or is not mounted."],
-                )
+        try:
+            if plan.boot_mode == BootMode.UEFI:
+                if not esp_root or not esp_root.exists():
+                    return RecoveryResult(
+                        success=False,
+                        plan=plan,
+                        messages=[],
+                        errors=["ESP root path does not exist or is not mounted."],
+                    )
 
-            target_ms_boot = esp_root / "EFI" / "Microsoft" / "Boot"
+                target_ms_boot = esp_root / "EFI" / "Microsoft" / "Boot"
 
-            # Step 1: Backup existing boot directory
-            if plan.backup_esp and target_ms_boot.parent.exists():
-                backed_up = self.deployer.backup_existing_boot_dir(target_ms_boot.parent)
-                if backed_up:
-                    backup_path_str = str(backed_up)
-                    messages.append(f"Saved pre-flight backup to {backup_path_str}")
+                # Step 1: Backup existing boot directory
+                if plan.backup_esp and target_ms_boot.parent.exists():
+                    backed_up = self.deployer.backup_existing_boot_dir(target_ms_boot.parent)
+                    if backed_up:
+                        backup_path_str = str(backed_up)
+                        messages.append(f"Saved pre-flight backup to {backup_path_str}")
 
-            # Step 2: Deploy UEFI boot assets
-            deploy_ok, actions, deploy_errs = self.deployer.deploy_uefi_boot_assets(
-                win_root=win_root,
-                esp_root=esp_root,
-                install_fallback=plan.install_fallback_bootx64,
-                dry_run=False,
-            )
-            messages.extend(actions)
-            errors.extend(deploy_errs)
-
-            # Step 3: Deploy and configure BCD hive
-            target_bcd = target_ms_boot / "BCD"
-            src_template = win_root / "Windows" / "System32" / "config" / "BCD-Template"
-            if not src_template.exists():
-                # Check case-insensitively
-                found = self.deployer._find_file_case_insensitive(win_root / "Windows" / "System32" / "config", "BCD-Template")
-                if found:
-                    src_template = found
-
-            bcd_ok = self.bcd.deploy_bcd(
-                target_path=target_bcd,
-                source_template=src_template if src_template.exists() else None,
-                boot_mode=BootMode.UEFI,
-                windows_partition=plan.windows_target.partition,
-                description=plan.windows_target.product_name or "Windows",
-            )
-
-            if bcd_ok:
-                messages.append(f"BCD hive successfully created at {target_bcd}")
-            else:
-                errors.append(f"Failed to generate valid BCD hive at {target_bcd}")
-
-            # Step 4: NVRAM registration
-            if plan.update_nvram and plan.esp_target:
-                nvram_ok, nvram_acts, nvram_errs = self.nvram.create_or_update_windows_entry(
-                    esp_partition=plan.esp_target,
-                    set_first=True,
+                # Step 2: Deploy UEFI boot assets
+                deploy_ok, actions, deploy_errs = self.deployer.deploy_uefi_boot_assets(
+                    win_root=win_root,
+                    esp_root=esp_root,
+                    install_fallback=plan.install_fallback_bootx64,
                     dry_run=False,
                 )
-                messages.extend(nvram_acts)
-                if not nvram_ok:
-                    # NVRAM failure is treated as warning if fallback loader is installed
-                    warning_note = "NVRAM update failed; fallback loader will handle boot if NVRAM is inaccessible."
-                    messages.append(warning_note)
-                    errors.extend(nvram_errs)
+                messages.extend(actions)
+                errors.extend(deploy_errs)
 
-            # Step 5: Post-recovery verification
-            checks = self.verify_uefi_recovery(esp_root, plan.install_fallback_bootx64)
+                # Step 3: Deploy and configure BCD hive
+                target_bcd = target_ms_boot / "BCD"
+                src_template = win_root / "Windows" / "System32" / "config" / "BCD-Template"
+                if not src_template.exists():
+                    # Check case-insensitively
+                    found = self.deployer._find_file_case_insensitive(win_root / "Windows" / "System32" / "config", "BCD-Template")
+                    if found:
+                        src_template = found
 
-        else:
-            # Legacy PCAT recovery
-            deploy_ok, actions, deploy_errs = self.deployer.deploy_legacy_boot_assets(
-                win_root=win_root,
-                boot_root=esp_root or win_root,
-                dry_run=False,
-            )
-            messages.extend(actions)
-            errors.extend(deploy_errs)
+                bcd_ok = self.bcd.deploy_bcd(
+                    target_path=target_bcd,
+                    source_template=src_template if src_template.exists() else None,
+                    boot_mode=BootMode.UEFI,
+                    windows_partition=plan.windows_target.partition,
+                    description=plan.windows_target.product_name or "Windows",
+                )
 
-            target_bcd = (esp_root or win_root) / "Boot" / "BCD"
-            bcd_ok = self.bcd.deploy_bcd(
-                target_path=target_bcd,
-                boot_mode=BootMode.BIOS,
-                windows_partition=plan.windows_target.partition,
-            )
-            if bcd_ok:
-                messages.append(f"Legacy BCD hive created at {target_bcd}")
+                if bcd_ok:
+                    messages.append(f"BCD hive successfully created at {target_bcd}")
+                else:
+                    errors.append(f"Failed to generate valid BCD hive at {target_bcd}")
+
+                # Step 4: NVRAM registration
+                if plan.update_nvram and plan.esp_target:
+                    nvram_ok, nvram_acts, nvram_errs = self.nvram.create_or_update_windows_entry(
+                        esp_partition=plan.esp_target,
+                        set_first=True,
+                        dry_run=False,
+                    )
+                    messages.extend(nvram_acts)
+                    if not nvram_ok:
+                        # NVRAM failure is treated as warning if fallback loader is installed
+                        warning_note = "NVRAM update failed; fallback loader will handle boot if NVRAM is inaccessible."
+                        messages.append(warning_note)
+                        errors.extend(nvram_errs)
+
+                # Step 5: Post-recovery verification
+                checks = self.verify_uefi_recovery(esp_root, plan.install_fallback_bootx64)
+
             else:
-                errors.append(f"Failed to generate legacy BCD hive at {target_bcd}")
+                # Legacy PCAT recovery
+                deploy_ok, actions, deploy_errs = self.deployer.deploy_legacy_boot_assets(
+                    win_root=win_root,
+                    boot_root=esp_root or win_root,
+                    dry_run=False,
+                )
+                messages.extend(actions)
+                errors.extend(deploy_errs)
 
-            checks = self.verify_legacy_recovery(esp_root or win_root)
+                target_bcd = (esp_root or win_root) / "Boot" / "BCD"
+                bcd_ok = self.bcd.deploy_bcd(
+                    target_path=target_bcd,
+                    boot_mode=BootMode.BIOS,
+                    windows_partition=plan.windows_target.partition,
+                )
+                if bcd_ok:
+                    messages.append(f"Legacy BCD hive created at {target_bcd}")
+                else:
+                    errors.append(f"Failed to generate legacy BCD hive at {target_bcd}")
+
+                checks = self.verify_legacy_recovery(esp_root or win_root)
+        except PermissionError as pe:
+            errors.append(f"Permission denied during recovery operations: {pe}. Root/sudo privileges required.")
+        except Exception as ex:
+            errors.append(f"Unexpected recovery error: {ex}")
 
         # Success is determined by critical files passing verification
         critical_passed = all(c.passed for c in checks if c.severity == "ERROR")

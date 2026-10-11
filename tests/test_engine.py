@@ -152,6 +152,38 @@ class TestEngine(unittest.TestCase):
             # No files created
             self.assertFalse((esp_root / "EFI").exists())
 
+    def test_execute_recovery_permission_denied_handling(self):
+        with tempfile.TemporaryDirectory() as tmp_win:
+            win_root = Path(tmp_win)
+            self._setup_mock_windows(win_root)
+
+            win_part = PartitionInfo(
+                device="/dev/sda2",
+                disk="/dev/sda",
+                part_num=2,
+                fstype="ntfs",
+            )
+            esp_part = PartitionInfo(
+                device="/dev/sda1",
+                disk="/dev/sda",
+                part_num=1,
+                fstype="vfat",
+            )
+            win = WindowsInstallation(partition=win_part)
+
+            plan = self.engine.build_plan(
+                windows=win,
+                esp=esp_part,
+                boot_mode=BootMode.UEFI,
+                dry_run=False,
+            )
+
+            # Point esp_root to a non-existent unwritable directory
+            esp_root = Path("/proc/protected_esp")
+            result = self.engine.execute_recovery(plan, win_root=win_root, esp_root=esp_root)
+            self.assertFalse(result.success)
+            self.assertGreater(len(result.errors), 0)
+
 
 if __name__ == "__main__":
     unittest.main()
