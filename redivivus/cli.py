@@ -12,11 +12,86 @@ from pathlib import Path
 from typing import Any, List, Optional
 
 from redivivus import __version__
+from redivivus.colors import (
+    bold,
+    bold_cyan,
+    bold_green,
+    bold_red,
+    bold_white,
+    bold_yellow,
+    cyan,
+    dim,
+    format_status_badge,
+    green,
+    red,
+    strip_ansi,
+    visible_len,
+    yellow,
+)
 from redivivus.engine import RecoveryEngine
 from redivivus.models import BootMode, PartitionInfo, ScanReport, WindowsInstallation
 from redivivus.scanner import SystemScanner
 
 DEFAULT_TABLE_WIDTH = 100
+
+
+def is_root() -> bool:
+    """Checks if current process has root / UID 0 privileges."""
+    return getattr(os, "geteuid", lambda: 0)() == 0
+
+
+def elevate_privileges() -> bool:
+    """Attempts to re-execute the current process with root privileges via sudo or pkexec."""
+    sudo_bin = shutil.which("sudo") or shutil.which("pkexec")
+    if not sudo_bin:
+        print(bold_red("\n[!] Error: Neither 'sudo' nor 'pkexec' found in system PATH."))
+        print("    Please run the recovery command as root:")
+        print(f"    sudo {sys.executable} -m redivivus " + " ".join(sys.argv[1:]))
+        return False
+
+    orig_args = sys.argv[1:]
+    if sys.argv[0].endswith("__main__.py") or (not os.path.isabs(sys.argv[0]) and "redivivus" in sys.argv[0]):
+        re_exec = [sudo_bin, sys.executable, "-m", "redivivus"] + orig_args
+    elif sys.argv[0].endswith(".py"):
+        re_exec = [sudo_bin, sys.executable, sys.argv[0]] + orig_args
+    else:
+        re_exec = [sudo_bin, sys.argv[0]] + orig_args
+
+    print(cyan(f"\n[*] Elevating privileges with {os.path.basename(sudo_bin)}..."))
+    try:
+        os.execvp(sudo_bin, re_exec)
+    except OSError as e:
+        print(bold_red(f"\n[!] Failed to elevate privileges via {sudo_bin}: {e}"))
+        print("    Please re-run the command directly with root privileges.")
+        return False
+    return True
+
+
+def ensure_root_privileges(args: argparse.Namespace) -> bool:
+    """Ensures root privileges are present, prompting to elevate or auto-elevating if -y."""
+    if is_root():
+        return True
+
+    if getattr(args, "yes", False):
+        return elevate_privileges()
+
+    if not sys.stdin.isatty():
+        print(bold_red("\n[!] Error: Root privileges are required to perform bootloader recovery."))
+        print("    Please re-run with 'sudo' or specify '-y' to elevate automatically.")
+        return False
+
+    print(bold_yellow("\n[!] Root privileges are required to modify EFI bootloader files."))
+    try:
+        reply = input("Elevate privileges using sudo? [Y/n]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print("\nOperation cancelled.")
+        return False
+
+    if reply in ("", "y", "yes"):
+        return elevate_privileges()
+
+    print(bold_red("\nRecovery cancelled: Root privileges are required to write EFI files."))
+    return False
 
 
 def get_terminal_table_width(default: int = DEFAULT_TABLE_WIDTH, min_width: int = 80, max_width: int = 100) -> int:
@@ -30,7 +105,7 @@ def get_terminal_table_width(default: int = DEFAULT_TABLE_WIDTH, min_width: int 
 
 def compute_column_widths(
     headers: List[str],
-    rows: List[List[str]],
+    rows: List[List[Any]],
     target_width: int,
 ) -> List[int]:
     """Computes column widths so that the total rendered table width exactly matches target_width."""
@@ -48,8 +123,8 @@ def compute_column_widths(
     natural = []
     min_widths = []
     for i in range(n):
-        h_len = len(str(headers[i]))
-        max_c = max([len(str(r[i])) for r in rows if i < len(r)], default=0)
+        h_len = visible_len(headers[i])
+        max_c = max([visible_len(str(r[i])) for r in rows if i < len(r)], default=0)
         nat = max(h_len, max_c, 3)
         natural.append(nat)
         # Protect compact columns (<= 15 chars) so identifiers do not wrap prematurely
@@ -60,7 +135,7 @@ def compute_column_widths(
 
     # If sum of min_widths exceeds budget, fall back to header length / 3
     if sum(min_widths) > budget:
-        min_widths = [max(3, min(len(str(headers[i])), 10)) for i in range(n)]
+        min_widths = [max(3, min(visible_len(headers[i]), 10)) for i in range(n)]
 
     total_natural = sum(natural)
     if total_natural <= budget:
@@ -103,7 +178,7 @@ def compute_column_widths(
 
 def format_cli_table(
     headers: List[str],
-    rows: List[List[str]],
+    rows: List[List[Any]],
     alignments: Optional[List[str]] = None,
     target_width: Optional[int] = None,
 ) -> str:
@@ -127,39 +202,49 @@ def format_cli_table(
         alignments = list(alignments) + ["left"] * (n - len(alignments))
 
     def align_cell(text: str, width: int, align: str) -> str:
-        s = str(text)
-        if len(s) > width:
-            s = s[:width]
+        v_len = visible_len(text)
+        if v_len > width:
+            text = text[:width]
+            v_len = visible_len(text)
+        pad = max(0, width - v_len)
         if align == "center":
-            return s.center(width)
+            left = pad // 2
+            right = pad - left
+            return " " * left + text + " " * right
         elif align == "right":
-            return s.rjust(width)
-        return s.ljust(width)
+            return " " * pad + text
+        return text + " " * pad
 
-    def wrap_cell(val: Any, width: int) -> List[str]:
+    def wrap_cell(val: Any, width: int, is_header: bool = False) -> List[str]:
         text = str(val) if val is not None else ""
         if not text:
             return [""]
+        if not is_header:
+            badge = format_status_badge(text)
+            if visible_len(badge) <= width:
+                return [badge]
+        plain = strip_ansi(text)
         all_lines: List[str] = []
-        for line in text.split("\n"):
+        for line in plain.split("\n"):
             wrapped = textwrap.wrap(line, width=width, break_long_words=True, break_on_hyphens=False)
             all_lines.extend(wrapped or [""])
         return all_lines or [""]
 
-    top_border = "┌─" + "─┬─".join("─" * w for w in widths) + "─┐"
-    sep_border = "├─" + "─┼─".join("─" * w for w in widths) + "─┤"
-    bot_border = "└─" + "─┴─".join("─" * w for w in widths) + "─┘"
+    top_border = dim("┌─" + "─┬─".join("─" * w for w in widths) + "─┐")
+    sep_border = dim("├─" + "─┼─".join("─" * w for w in widths) + "─┤")
+    bot_border = dim("└─" + "─┴─".join("─" * w for w in widths) + "─┘")
+    pipe = dim("│")
 
     out: List[str] = [top_border]
 
     # Render header
-    hdr_wrapped = [wrap_cell(h, widths[i]) for i, h in enumerate(headers)]
+    hdr_wrapped = [wrap_cell(h, widths[i], is_header=True) for i, h in enumerate(headers)]
     hdr_h = max(len(c) for c in hdr_wrapped)
     for v in range(hdr_h):
-        line = "│ " + " │ ".join(
-            align_cell(hdr_wrapped[i][v] if v < len(hdr_wrapped[i]) else "", widths[i], alignments[i])
+        line = f"{pipe} " + f" {pipe} ".join(
+            align_cell(bold_cyan(hdr_wrapped[i][v]) if v < len(hdr_wrapped[i]) else "", widths[i], alignments[i])
             for i in range(n)
-        ) + " │"
+        ) + f" {pipe}"
         out.append(line)
     out.append(sep_border)
 
@@ -168,10 +253,10 @@ def format_cli_table(
         row_wrapped = [wrap_cell(row[i] if i < len(row) else "", widths[i]) for i in range(n)]
         row_h = max((len(c) for c in row_wrapped), default=1)
         for v in range(row_h):
-            line = "│ " + " │ ".join(
+            line = f"{pipe} " + f" {pipe} ".join(
                 align_cell(row_wrapped[i][v] if v < len(row_wrapped[i]) else "", widths[i], alignments[i])
                 for i in range(n)
-            ) + " │"
+            ) + f" {pipe}"
             out.append(line)
 
     out.append(bot_border)
@@ -239,15 +324,15 @@ def cmd_scan(args: argparse.Namespace) -> int:
     table_width = get_terminal_table_width()
     banner = "=" * table_width
 
-    print(f"\n{banner}")
-    print(f"  Redivivus Hardware & Boot Diagnostic Report (v{__version__})")
-    print(f"{banner}\n")
-    print(f"  • Firmware Environment : {'UEFI' if report.firmware_uefi else 'BIOS / Legacy'}")
-    print(f"  • Detected Boot Mode   : {report.system_boot_mode.value}")
-    print(f"  • Total Partitions     : {len(report.partitions)}\n")
+    print(bold_cyan(f"\n{banner}"))
+    print(bold_cyan(f"  Redivivus Hardware & Boot Diagnostic Report (v{__version__})"))
+    print(bold_cyan(f"{banner}\n"))
+    print(f"  {bold('• Firmware Environment')} : {cyan('UEFI') if report.firmware_uefi else yellow('BIOS / Legacy')}")
+    print(f"  {bold('• Detected Boot Mode')}   : {cyan(report.system_boot_mode.value)}")
+    print(f"  {bold('• Total Partitions')}     : {len(report.partitions)}\n")
 
     # 1. Windows Installations Table
-    print("[ 1. Detected Windows Installations ]")
+    print(bold_cyan("[ 1. Detected Windows Installations ]"))
     if report.windows_installations:
         win_headers = ["Device", "Product", "UEFI", "Legacy", "BCD-Template", "Mount"]
         win_aligns = ["left", "left", "center", "center", "center", "left"]
@@ -263,11 +348,11 @@ def cmd_scan(args: argparse.Namespace) -> int:
             ])
         print(format_cli_table(win_headers, win_rows, win_aligns, target_width=table_width))
     else:
-        print("  (No Windows installations detected on accessible block devices.)")
+        print(dim("  (No Windows installations detected on accessible block devices.)"))
     print()
 
     # 2. EFI System Partitions (ESP)
-    print("[ 2. Detected EFI System Partitions (ESP) ]")
+    print(bold_cyan("[ 2. Detected EFI System Partitions (ESP) ]"))
     if report.esp_partitions:
         esp_headers = ["Device", "Disk", "Part #", "FSType", "Label", "Size", "Mount"]
         esp_aligns = ["left", "left", "center", "center", "left", "right", "left"]
@@ -284,12 +369,12 @@ def cmd_scan(args: argparse.Namespace) -> int:
             ])
         print(format_cli_table(esp_headers, esp_rows, esp_aligns, target_width=table_width))
     else:
-        print("  (No EFI System Partitions (FAT32/ESP) found.)")
+        print(dim("  (No EFI System Partitions (FAT32/ESP) found.)"))
     print()
 
     # 3. UEFI NVRAM Boot Entries
     if report.firmware_uefi:
-        print("[ 3. UEFI NVRAM Boot Entries ]")
+        print(bold_cyan("[ 3. UEFI NVRAM Boot Entries ]"))
         if report.nvram_entries:
             nvram_headers = ["Boot #", "Active", "Label", "File Path", "Is Windows"]
             nvram_aligns = ["left", "center", "left", "left", "center"]
@@ -304,10 +389,10 @@ def cmd_scan(args: argparse.Namespace) -> int:
                 ])
             print(format_cli_table(nvram_headers, nvram_rows, nvram_aligns, target_width=table_width))
             if report.current_boot_order:
-                print(f"\n  • Boot Order: {' -> '.join(report.current_boot_order)}")
+                print(f"\n  {bold('• Boot Order')}: {cyan(' -> '.join(report.current_boot_order))}")
         else:
-            print("  (No NVRAM entries reported or efibootmgr not accessible.)")
-    print()
+            print(dim("  (No NVRAM entries reported or efibootmgr not accessible.)"))
+        print()
 
     return 0
 
@@ -320,9 +405,9 @@ def cmd_diagnose(args: argparse.Namespace) -> int:
     table_width = get_terminal_table_width()
     banner = "=" * table_width
 
-    print(f"\n{banner}")
-    print("  Redivivus Bootability Diagnosis")
-    print(f"{banner}\n")
+    print(bold_cyan(f"\n{banner}"))
+    print(bold_cyan("  Redivivus Bootability Diagnosis"))
+    print(bold_cyan(f"{banner}\n"))
 
     issues: List[str] = []
     recommendations: List[str] = []
@@ -342,15 +427,16 @@ def cmd_diagnose(args: argparse.Namespace) -> int:
             recommendations.append("Run 'redivivus recover' to register and prioritize Windows in UEFI NVRAM.")
 
     if issues:
-        print("[ Detected Issues ]")
+        print(bold_red("[ Detected Issues ]"))
         for iss in issues:
-            print(f"  [!] {iss}")
-        print("\n[ Recommendations ]")
+            print(f"  {bold_red('[!]')} {iss}")
+        print(bold_yellow("\n[ Recommendations ]"))
         for rec in recommendations:
-            print(f"  [*] {rec}")
+            print(f"  {bold_yellow('[*]')} {rec}")
     else:
-        print("  [OK] Diagnosis completed: System partitions appear healthy for Windows boot recovery.")
+        print(bold_green("  [+] Diagnosis completed: System partitions appear healthy for Windows boot recovery."))
 
+    print()
     return 0 if not issues else 1
 
 
@@ -359,14 +445,14 @@ def cmd_recover(args: argparse.Namespace) -> int:
     table_width = get_terminal_table_width()
     banner = "=" * table_width
 
-    print(f"\n{banner}")
-    print("  Redivivus Windows Bootloader Recovery")
-    print(f"{banner}\n")
+    print(bold_cyan(f"\n{banner}"))
+    print(bold_cyan("  Redivivus Windows Bootloader Recovery"))
+    print(bold_cyan(f"{banner}\n"))
 
     # Root privilege check: recovery modifies boot partitions and firmware NVRAM
-    if not args.dry_run and hasattr(os, "geteuid") and os.geteuid() != 0:
-        print("Error: Root privileges required for bootloader recovery. Please run with 'sudo redivivus recover' (or use --dry-run to preview).")
-        return 1
+    if not args.dry_run and not is_root():
+        if not ensure_root_privileges(args):
+            return 1
 
     scanner = SystemScanner()
     engine = RecoveryEngine()
@@ -381,17 +467,17 @@ def cmd_recover(args: argparse.Namespace) -> int:
                 windows_target = w
                 break
         if not windows_target:
-            print(f"Error: Specified Windows partition '{args.win}' not found or invalid.")
+            print(bold_red(f"Error: Specified Windows partition '{args.win}' not found or invalid."))
             return 1
     else:
         if not report.windows_installations:
-            print("Error: No Windows installations detected on this machine.")
+            print(bold_red("Error: No Windows installations detected on this machine."))
             return 1
         elif len(report.windows_installations) == 1:
             windows_target = report.windows_installations[0]
-            print(f"Auto-selected Windows installation: {windows_target.partition.device} ({windows_target.product_name})")
+            print(f"  {bold('Auto-selected Windows installation')}: {windows_target.partition.device} ({windows_target.product_name})")
         else:
-            print("Multiple Windows installations detected. Please select via `--win <device>`:")
+            print(bold_yellow("Multiple Windows installations detected. Please select via `--win <device>`:"))
             for w in report.windows_installations:
                 print(f"  - {w.partition.device}: {w.product_name}")
             return 1
@@ -407,16 +493,16 @@ def cmd_recover(args: argparse.Namespace) -> int:
                     esp_target = e
                     break
             if not esp_target:
-                print(f"Error: Specified ESP partition '{args.esp}' not found or invalid.")
+                print(bold_red(f"Error: Specified ESP partition '{args.esp}' not found or invalid."))
                 return 1
         else:
             if not report.esp_partitions:
-                print("Error: No EFI System Partition (ESP) found. Cannot proceed with UEFI recovery.")
+                print(bold_red("Error: No EFI System Partition (ESP) found. Cannot proceed with UEFI recovery."))
                 return 1
             # Prefer ESP on the same disk as Windows, or the first mounted ESP
             same_disk_esp = [e for e in report.esp_partitions if e.disk == windows_target.partition.disk]
             esp_target = same_disk_esp[0] if same_disk_esp else report.esp_partitions[0]
-            print(f"Auto-selected ESP partition: {esp_target.device} (on {esp_target.disk})")
+            print(f"  {bold('Auto-selected ESP partition')}:        {esp_target.device} (on {esp_target.disk})")
 
     # 3. Mount checks & preparation (only mounted if actually executing changes)
     win_mount = windows_target.partition.mount_point
@@ -428,7 +514,7 @@ def cmd_recover(args: argparse.Namespace) -> int:
         os.makedirs(temp_win_dir, exist_ok=True)
         ret, _, _ = scanner._run_cmd(["mount", "-o", "ro", windows_target.partition.device, temp_win_dir])
         if ret != 0:
-            print(f"Error: Cannot mount Windows partition {windows_target.partition.device}. Run with sudo.")
+            print(bold_red(f"Error: Cannot mount Windows partition {windows_target.partition.device}. Run with sudo."))
             return 1
         win_mount = temp_win_dir
         temp_mounted_win = True
@@ -439,7 +525,7 @@ def cmd_recover(args: argparse.Namespace) -> int:
         os.makedirs(temp_esp_dir, exist_ok=True)
         ret, _, _ = scanner._run_cmd(["mount", esp_target.device, temp_esp_dir])
         if ret != 0:
-            print(f"Error: Cannot mount ESP partition {esp_target.device}. Run with sudo.")
+            print(bold_red(f"Error: Cannot mount ESP partition {esp_target.device}. Run with sudo."))
             if temp_mounted_win:
                 scanner._run_cmd(["umount", win_mount])
             return 1
@@ -458,7 +544,7 @@ def cmd_recover(args: argparse.Namespace) -> int:
             dry_run=args.dry_run,
         )
 
-        print("\n[ Planned Recovery Actions ]")
+        print(bold_cyan("\n[ Planned Recovery Actions ]"))
         action_headers = ["Category", "Action Description", "Target / Command"]
         action_aligns = ["center", "left", "left"]
         action_rows = [
@@ -469,33 +555,41 @@ def cmd_recover(args: argparse.Namespace) -> int:
         print()
 
         if args.dry_run:
-            print("Dry-run preview complete. Exiting without making changes.")
+            print(green("Dry-run preview complete. Exiting without making changes."))
             return 0
 
         if not args.yes:
             reply = input("Proceed with recovery execution? [y/N]: ").strip().lower()
             if reply not in ("y", "yes"):
-                print("Recovery cancelled by user.")
+                print(yellow("Recovery cancelled by user."))
                 return 0
 
         if not win_mount:
-            print("Error: Windows partition could not be mounted. Cannot proceed.")
+            print(bold_red("Error: Windows partition could not be mounted. Cannot proceed."))
             return 1
 
         # 5. Execute recovery
-        result = engine.execute_recovery(
-            plan=plan,
-            win_root=Path(win_mount),
-            esp_root=Path(esp_mount) if esp_mount else None,
-        )
+        try:
+            result = engine.execute_recovery(
+                plan=plan,
+                win_root=Path(win_mount),
+                esp_root=Path(esp_mount) if esp_mount else None,
+            )
+        except PermissionError as pe:
+            print(bold_red(f"\n[!] Permission denied during recovery: {pe}"))
+            print("    Please run with root/sudo privileges.")
+            return 1
+        except Exception as ex:
+            print(bold_red(f"\n[!] Unexpected error during recovery execution: {ex}"))
+            return 1
 
-        print("\n[ Execution Results ]")
+        print(bold_cyan("\n[ Execution Results ]"))
         for msg in result.messages:
-            print(f"  [+] {msg}")
+            print(f"  {bold_green('[+]')} {msg}")
         for err in result.errors:
-            print(f"  [!] ERROR: {err}")
+            print(f"  {bold_red('[!] ERROR:')} {err}")
 
-        print("\n[ Integrity Verification ]")
+        print(bold_cyan("\n[ Integrity Verification ]"))
         check_headers = ["Check", "Status", "Details"]
         check_aligns = ["left", "center", "left"]
         check_rows = [
@@ -506,11 +600,11 @@ def cmd_recover(args: argparse.Namespace) -> int:
         print()
 
         if result.success:
-            print("[SUCCESS] Windows bootloader restored successfully!")
-            print("You may now reboot your system into Windows.")
+            print(bold_green("[SUCCESS] Windows bootloader restored successfully!"))
+            print("You may now reboot your system into Windows.\n")
             return 0
         else:
-            print("[FAILURE] Boot recovery encountered errors. Check logs above.")
+            print(bold_red("[FAILURE] Boot recovery encountered errors. Check logs above.\n"))
             return 1
 
     finally:

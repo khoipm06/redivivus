@@ -139,15 +139,16 @@ class TestCli(unittest.TestCase):
         self.assertNotIn("# Redivivus Bootability", buf.getvalue())
 
     def test_cli_recover_permission_check(self):
-        # Non-root user running recover without dry-run should fail gracefully
+        # Non-root user running recover without dry-run should prompt or fail gracefully
         with patch("os.geteuid", return_value=1000):
-            buf = io.StringIO()
-            with redirect_stdout(buf):
-                ret = main(["recover"])
-            self.assertEqual(ret, 1)
-            output = buf.getvalue()
-            self.assertIn("Root privileges required", output)
-            self.assertIn("sudo", output)
+            with patch("sys.stdin.isatty", return_value=False):
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    ret = main(["recover"])
+                self.assertEqual(ret, 1)
+                output = buf.getvalue()
+                self.assertIn("Root privileges are required", output)
+                self.assertIn("sudo", output)
 
     def test_cli_recover_dry_run_non_root(self):
         # Non-root user running recover WITH --dry-run should succeed
