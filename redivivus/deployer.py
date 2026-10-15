@@ -85,11 +85,53 @@ class BootDeployer:
         sub_folder = "EFI" if boot_mode == BootMode.UEFI else "PCAT"
         return self._find_dir_case_insensitive(boot_dir, sub_folder)
 
+    @staticmethod
+    def is_non_windows_efi_loader(file_path: Path) -> bool:
+        """
+        Inspects an EFI binary to detect if it is a non-Windows fallback loader (e.g. GRUB, shim, systemd-boot).
+        """
+        if not file_path.exists() or file_path.stat().st_size == 0:
+            return False
+        try:
+            with open(file_path, "rb") as f:
+                content = f.read()
+        except Exception:
+            return False
+
+        content_lower = content.lower()
+        non_win_signatures = [
+            b"grub",
+            b"shim",
+            b"systemd-boot",
+            b"gnu-efi",
+            b"canonical",
+            b"red hat",
+            b"fedora",
+            b"ubuntu",
+            b"debian",
+            b"suse",
+            b"arch linux",
+            b"linux",
+        ]
+        for sig in non_win_signatures:
+            if sig in content_lower:
+                return True
+
+        has_ms = (
+            b"microsoft corporation" in content_lower
+            or b"bootmgfw" in content_lower
+        )
+        if not has_ms:
+            return True
+
+        return False
+
     def deploy_uefi_boot_assets(
         self,
         win_root: Path,
         esp_root: Path,
         install_fallback: bool = True,
+        force_fallback: bool = False,
         dry_run: bool = False,
     ) -> Tuple[bool, List[str], List[str]]:
         """
@@ -163,8 +205,21 @@ class BootDeployer:
             bootmgfw = self._find_file_case_insensitive(dest_ms_boot if not dry_run else src_efi_dir, "bootmgfw.efi")
             if bootmgfw and bootmgfw.exists():
                 fallback_target = dest_fallback_boot / "bootx64.efi"
-                actions.append(f"Deploy UEFI fallback loader: {bootmgfw.name} -> {fallback_target}")
-                if not dry_run:
+                should_copy = True
+                if fallback_target.exists() and self.is_non_windows_efi_loader(fallback_target):
+                    if not force_fallback:
+                        should_copy = False
+                        actions.append(
+                            f"Preserved existing non-Windows fallback loader (GRUB/shim detected at {fallback_target}). Use --force-fallback to overwrite."
+                        )
+                    else:
+                        actions.append(
+                            f"Overwriting non-Windows fallback loader with Windows bootmgfw (--force-fallback specified): {fallback_target}"
+                        )
+                else:
+                    actions.append(f"Deploy UEFI fallback loader: {bootmgfw.name} -> {fallback_target}")
+
+                if should_copy and not dry_run:
                     try:
                         shutil.copy2(bootmgfw, fallback_target)
                     except Exception as ex:

@@ -136,6 +136,58 @@ class TestDeployer(unittest.TestCase):
             self.assertGreater(len(errors), 0)
             self.assertTrue(any("denied" in e.lower() or "failed" in e.lower() or "error" in e.lower() for e in errors))
 
+    def test_preserve_existing_non_windows_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp_win, tempfile.TemporaryDirectory() as tmp_esp:
+            win_root = Path(tmp_win)
+            esp_root = Path(tmp_esp)
+            self._setup_mock_windows(win_root)
+
+            # Pre-create GRUB fallback loader
+            fallback = esp_root / "EFI" / "Boot" / "bootx64.efi"
+            fallback.parent.mkdir(parents=True)
+            grub_bytes = b"MZ\x90\x00" + b"GNU GRUB version 2.06 by Free Software Foundation"
+            fallback.write_bytes(grub_bytes)
+
+            success, actions, errors = self.deployer.deploy_uefi_boot_assets(
+                win_root=win_root,
+                esp_root=esp_root,
+                install_fallback=True,
+                force_fallback=False,
+                dry_run=False,
+            )
+
+            self.assertTrue(success)
+            self.assertEqual(len(errors), 0)
+            # Ensure file was preserved, not overwritten
+            self.assertEqual(fallback.read_bytes(), grub_bytes)
+            self.assertTrue(any("Preserved existing non-Windows fallback" in a for a in actions))
+
+    def test_force_fallback_overwrites_non_windows(self):
+        with tempfile.TemporaryDirectory() as tmp_win, tempfile.TemporaryDirectory() as tmp_esp:
+            win_root = Path(tmp_win)
+            esp_root = Path(tmp_esp)
+            self._setup_mock_windows(win_root)
+
+            # Pre-create shim fallback loader
+            fallback = esp_root / "EFI" / "Boot" / "bootx64.efi"
+            fallback.parent.mkdir(parents=True)
+            shim_bytes = b"MZ\x90\x00" + b"shimx64 loader by Red Hat"
+            fallback.write_bytes(shim_bytes)
+
+            success, actions, errors = self.deployer.deploy_uefi_boot_assets(
+                win_root=win_root,
+                esp_root=esp_root,
+                install_fallback=True,
+                force_fallback=True,
+                dry_run=False,
+            )
+
+            self.assertTrue(success)
+            self.assertEqual(len(errors), 0)
+            # Ensure file was overwritten with Windows bootmgfw
+            self.assertEqual(fallback.read_bytes(), b"PE_BOOTMGFW")
+            self.assertTrue(any("Overwriting non-Windows fallback" in a for a in actions))
+
 
 if __name__ == "__main__":
     unittest.main()
