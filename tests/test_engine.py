@@ -184,6 +184,93 @@ class TestEngine(unittest.TestCase):
             self.assertFalse(result.success)
             self.assertGreater(len(result.errors), 0)
 
+    def test_build_plan_set_first_default_false(self):
+        win_part = PartitionInfo(
+            device="/dev/nvme0n1p2",
+            disk="/dev/nvme0n1",
+            part_num=2,
+            fstype="ntfs",
+        )
+        esp_part = PartitionInfo(
+            device="/dev/nvme0n1p1",
+            disk="/dev/nvme0n1",
+            part_num=1,
+            fstype="vfat",
+        )
+        win = WindowsInstallation(partition=win_part)
+
+        plan = self.engine.build_plan(
+            windows=win,
+            esp=esp_part,
+            boot_mode=BootMode.UEFI,
+        )
+
+        self.assertFalse(plan.set_first)
+        self.assertFalse(plan.force_fallback)
+        nvram_actions = [a for a in plan.actions if a.category == "NVRAM"]
+        self.assertEqual(len(nvram_actions), 1)
+        self.assertIn("preserving existing boot order", nvram_actions[0].description)
+
+    def test_build_plan_set_first_true_and_force_fallback(self):
+        win_part = PartitionInfo(
+            device="/dev/nvme0n1p2",
+            disk="/dev/nvme0n1",
+            part_num=2,
+            fstype="ntfs",
+        )
+        esp_part = PartitionInfo(
+            device="/dev/nvme0n1p1",
+            disk="/dev/nvme0n1",
+            part_num=1,
+            fstype="vfat",
+        )
+        win = WindowsInstallation(partition=win_part)
+
+        plan = self.engine.build_plan(
+            windows=win,
+            esp=esp_part,
+            boot_mode=BootMode.UEFI,
+            set_first=True,
+            force_fallback=True,
+        )
+
+        self.assertTrue(plan.set_first)
+        self.assertTrue(plan.force_fallback)
+        nvram_actions = [a for a in plan.actions if a.category == "NVRAM"]
+        self.assertIn("prioritize", nvram_actions[0].description)
+        fb_actions = [a for a in plan.actions if a.category == "Fallback"]
+        self.assertIn("force overwrite", fb_actions[0].description)
+
+    def test_execute_recovery_passes_set_first_to_nvram(self):
+        recorded_calls = []
+
+        def mock_create(esp_partition, label=None, loader_path=None, set_first=False, dry_run=False):
+            recorded_calls.append({"set_first": set_first})
+            return True, ["NVRAM updated"], []
+
+        self.nvram.create_or_update_windows_entry = mock_create
+
+        with tempfile.TemporaryDirectory() as tmp_win, tempfile.TemporaryDirectory() as tmp_esp:
+            win_root = Path(tmp_win)
+            esp_root = Path(tmp_esp)
+            self._setup_mock_windows(win_root)
+
+            win_part = PartitionInfo(device="/dev/sda2", disk="/dev/sda", part_num=2, fstype="ntfs")
+            esp_part = PartitionInfo(device="/dev/sda1", disk="/dev/sda", part_num=1, fstype="vfat")
+            win = WindowsInstallation(partition=win_part)
+
+            plan = self.engine.build_plan(
+                windows=win,
+                esp=esp_part,
+                boot_mode=BootMode.UEFI,
+                set_first=False,
+            )
+
+            result = self.engine.execute_recovery(plan, win_root=win_root, esp_root=esp_root)
+            self.assertTrue(result.success)
+            self.assertEqual(len(recorded_calls), 1)
+            self.assertFalse(recorded_calls[0]["set_first"])
+
 
 if __name__ == "__main__":
     unittest.main()

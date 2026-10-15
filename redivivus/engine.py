@@ -41,7 +41,9 @@ class RecoveryEngine:
         esp: Optional[PartitionInfo] = None,
         boot_mode: BootMode = BootMode.UEFI,
         install_fallback: bool = True,
+        force_fallback: bool = False,
         update_nvram: bool = True,
+        set_first: bool = False,
         backup_esp: bool = True,
         dry_run: bool = False,
     ) -> RecoveryPlan:
@@ -91,20 +93,30 @@ class RecoveryEngine:
 
             # 5. Fallback loader
             if install_fallback:
+                fb_desc = (
+                    "Install or force overwrite UEFI fallback loader (EFI/Boot/bootx64.efi)"
+                    if force_fallback
+                    else "Install standard UEFI fallback loader (EFI/Boot/bootx64.efi, preserving existing GRUB/shim)"
+                )
                 actions.append(
                     ActionItem(
                         category="Fallback",
-                        description="Install standard UEFI fallback loader (EFI/Boot/bootx64.efi)",
+                        description=fb_desc,
                         target_path=f"{esp.mount_point or esp.device}/EFI/Boot/bootx64.efi",
                     )
                 )
 
             # 6. NVRAM
             if update_nvram:
+                nvram_desc = (
+                    f"Register and prioritize 'Windows Boot Manager' entry via efibootmgr on {esp.disk} part {esp.part_num}"
+                    if set_first
+                    else f"Register 'Windows Boot Manager' entry via efibootmgr on {esp.disk} part {esp.part_num} (preserving existing boot order)"
+                )
                 actions.append(
                     ActionItem(
                         category="NVRAM",
-                        description=f"Register and prioritize 'Windows Boot Manager' entry via efibootmgr on {esp.disk} part {esp.part_num}",
+                        description=nvram_desc,
                         command=f"efibootmgr -c -d {esp.disk} -p {esp.part_num} -L 'Windows Boot Manager' -l '\\EFI\\Microsoft\\Boot\\bootmgfw.efi'",
                     )
                 )
@@ -156,7 +168,9 @@ class RecoveryEngine:
             actions=actions,
             backup_esp=backup_esp,
             install_fallback_bootx64=install_fallback,
+            force_fallback=force_fallback,
             update_nvram=update_nvram,
+            set_first=set_first,
             dry_run=dry_run,
         )
 
@@ -207,6 +221,7 @@ class RecoveryEngine:
                     win_root=win_root,
                     esp_root=esp_root,
                     install_fallback=plan.install_fallback_bootx64,
+                    force_fallback=plan.force_fallback,
                     dry_run=False,
                 )
                 messages.extend(actions)
@@ -226,6 +241,7 @@ class RecoveryEngine:
                     source_template=src_template if src_template.exists() else None,
                     boot_mode=BootMode.UEFI,
                     windows_partition=plan.windows_target.partition,
+                    esp_partition=plan.esp_target,
                     description=plan.windows_target.product_name or "Windows",
                 )
 
@@ -238,7 +254,7 @@ class RecoveryEngine:
                 if plan.update_nvram and plan.esp_target:
                     nvram_ok, nvram_acts, nvram_errs = self.nvram.create_or_update_windows_entry(
                         esp_partition=plan.esp_target,
-                        set_first=True,
+                        set_first=plan.set_first,
                         dry_run=False,
                     )
                     messages.extend(nvram_acts)
