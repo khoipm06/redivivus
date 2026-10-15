@@ -54,7 +54,7 @@ class NvramManager:
         esp_partition: PartitionInfo,
         label: str = DEFAULT_LABEL,
         loader_path: str = DEFAULT_LOADER_PATH,
-        set_first: bool = True,
+        set_first: bool = False,
         dry_run: bool = False,
     ) -> Tuple[bool, List[str], List[str]]:
         """
