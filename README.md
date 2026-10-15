@@ -64,8 +64,8 @@ This internal directory is the exact source repository that Windows' own `bcdboo
    - **UEFI / GPT**: Deploys `bootmgfw.efi`, sets up localized fonts/resources, creates valid BCD, and installs standard `\EFI\Boot\bootx64.efi` fallback loader.
    - **Legacy BIOS / MBR**: Deploys `bootmgr` to partition root, supporting assets to `\Boot\`, and creates legacy PCAT BCD hive.
 3. **Automated Partition & OS Discovery**: Scans all block devices, identifies Windows installations (including product version), discovers candidate ESPs, and inspects NVRAM entries.
-4. **Resilient BCD Synthesis**: Reads and patches `BCD-Template` from the Windows installation. If the disk template is damaged or missing, automatically deploys bundled canonical BCD templates.
-5. **Firmware NVRAM Integration**: Inspects existing entries via `efibootmgr`, revives inactive entries, registers missing entries, and configures boot priority.
+4. **Resilient BCD Synthesis & Device Elements**: Deploys `BCD-Template` from the Windows installation or bundled canonical templates. Uses `hivexsh` to synthesize complete Windows Boot Manager (`{9dea862c-5cdd-4e70-acc1-f32b344d4795}`) and Windows OS Loader (`{b012b84d-c47c-4ed5-b722-c0c42163e569}`) objects, configuring 88-byte (`0x58`) HardDisk Partition device elements (GPT partition/disk GUIDs with Windows mixed-endian encoding, or MBR offsets and disk signatures), `winload` application paths, system root, and multi-string display order. If `hivexsh` is not installed, gracefully falls back to deploying bundled canonical templates.
+5. **Dual-Boot Boot Order Preservation & NVRAM Integration**: Inspects existing entries via `efibootmgr`, revives inactive entries, and registers Windows Boot Manager. Crucially, existing Linux boot entries (GRUB, shim, systemd-boot) are completely preserved: Windows Boot Manager is prioritized first in UEFI `BootOrder` while retaining all existing entries in their exact relative sequence.
 6. **Hardware Firmware Fallback Strategy**: Buggy UEFI firmware on many laptops ignores or wipes NVRAM entries; Redivivus automatically installs the standard fallback loader (`\EFI\Boot\bootx64.efi`) ensuring guaranteed bootability.
 7. **Pre-flight Safety Backups**: Automatically creates timestamped backups of existing `EFI/Microsoft` directories before modifying any files.
 8. **Dry-Run Simulation**: `--dry-run` previews every planned action, target file, and shell command without altering disk state.
@@ -76,8 +76,9 @@ This internal directory is the exact source repository that Windows' own `bcdboo
 
 ### System Requirements
 - Linux kernel with block device access (`lsblk`, `blkid`).
-- Python 3.8 or higher.
+- Python 3.8 or higher (zero external Python pip wheels required).
 - `efibootmgr` (for UEFI NVRAM operations; standard on almost all distributions).
+- `hivex` / `hivexsh` (recommended for deep BCD hive element synthesis; falls back to bundled templates if absent).
 - NTFS read/write support (`ntfs-3g` or kernel `ntfs3`).
 - FAT32 support (`vfat` kernel module).
 
@@ -107,28 +108,41 @@ Discovers all block devices, Windows installations, EFI partitions, and firmware
 sudo redivivus scan
 ```
 
-Output format (clean Markdown table):
-```markdown
-# Redivivus Hardware & Boot Diagnostic Report (v0.1.0)
+Output format (clean terminal table):
+```text
+================================================================================
+  Redivivus Hardware & Boot Diagnostic Report (v0.1.0)
+================================================================================
 
-- **Firmware Environment**: `UEFI`
-- **Detected Boot Mode**: `UEFI`
-- **Total Partitions Discovered**: 14
+  • Firmware Environment : UEFI
+  • Detected Boot Mode   : UEFI
+  • Total Partitions     : 14
 
-## 1. Detected Windows Installations
-| Device         | Product      | UEFI Capable | Legacy Capable | BCD-Template | Mount          |
-| -------------- | ------------ | ------------ | -------------- | ------------ | -------------- |
-| /dev/nvme0n1p2 | Windows (NT) | Yes          | Yes            | Found        | /media/windows |
+[ 1. Detected Windows Installations ]
+┌────────────────┬──────────────┬──────┬────────┬──────────────┬───────────────┐
+│ Device         │ Product      │ UEFI │ Legacy │ BCD-Template │ Mount         │
+├────────────────┼──────────────┼──────┼────────┼──────────────┼───────────────┤
+│ /dev/nvme0n1p2 │ Windows (NT) │ Yes  │  Yes   │    Found     │ /media/windows│
+└────────────────┴──────────────┴──────┴────────┴──────────────┴───────────────┘
 
-## 2. Detected EFI System Partitions (ESP)
-| Device         | Disk         | Part # | FSType | Label | Size   | Mount     |
-| -------------- | ------------ | ------ | ------ | ----- | ------ | --------- |
-| /dev/nvme0n1p1 | /dev/nvme0n1 | 1      | vfat   | ESP   | 275.0M | /boot/efi |
+[ 2. Detected EFI System Partitions (ESP) ]
+┌────────────────┬──────────────┬────────┬────────┬───────┬────────┬───────────┐
+│ Device         │ Disk         │ Part # │ FSType │ Label │   Size │ Mount     │
+├────────────────┼──────────────┼────────┼────────┼───────┼────────┼───────────┤
+│ /dev/nvme0n1p1 │ /dev/nvme0n1 │   1    │  vfat  │ ESP   │ 275.0M │ /boot/efi │
+└────────────────┴──────────────┴────────┴────────┴───────┴────────┴───────────┘
 
-## 3. UEFI NVRAM Boot Entries
-| Boot #   | Active | Label                | File Path | Is Windows |
-| -------- | ------ | -------------------- | --------- | ---------- |
-| Boot0005 | *      | Windows Boot Manager | (N/A)     | Yes        |
+[ 3. UEFI NVRAM Boot Entries ]
+┌──────────┬────────┬──────────────────────┬──────────────────────┬────────────┐
+│ Boot #   │ Active │ Label                │ File Path            │ Is Windows │
+├──────────┼────────┼──────────────────────┼──────────────────────┼────────────┤
+│ Boot0000 │   *    │ Fedora               │ \EFI\fedora\shimx64. │     No     │
+│          │        │                      │ efi                  │            │
+│ Boot0005 │   *    │ Windows Boot Manager │ \EFI\Microsoft\Boot\ │    Yes     │
+│          │        │                      │ bootmgfw.efi         │            │
+└──────────┴────────┴──────────────────────┴──────────────────────┴────────────┘
+
+  • Boot Order: 0005 -> 0000
 ```
 
 For scripting or automated pipelines, output JSON:
