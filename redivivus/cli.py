@@ -539,7 +539,9 @@ def cmd_recover(args: argparse.Namespace) -> int:
             esp=esp_target,
             boot_mode=boot_mode,
             install_fallback=not args.no_fallback,
+            force_fallback=getattr(args, "force_fallback", False),
             update_nvram=not args.no_nvram,
+            set_first=getattr(args, "set_first", False),
             backup_esp=not args.no_backup,
             dry_run=args.dry_run,
         )
@@ -646,7 +648,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_rec.add_argument("--mode", choices=["AUTO", "UEFI", "BIOS"], default="AUTO", help="Boot mode")
     p_rec.add_argument("--dry-run", action="store_true", help="Preview plan without modifying disk")
     p_rec.add_argument("--no-fallback", action="store_true", help="Skip deploying fallback bootx64.efi")
+    p_rec.add_argument("--force-fallback", action="store_true", help="Force overwrite of existing non-Windows fallback bootloader (e.g. GRUB/shim)")
     p_rec.add_argument("--no-nvram", action="store_true", help="Skip modifying UEFI NVRAM boot entries")
+    p_rec.add_argument("--set-first", action="store_true", help="Prioritize Windows in UEFI NVRAM boot order (default: False to preserve GRUB)")
     p_rec.add_argument("--no-backup", action="store_true", help="Skip creating safety pre-flight backup")
     p_rec.add_argument("-y", "--yes", action="store_true", help="Auto-confirm all prompts")
 

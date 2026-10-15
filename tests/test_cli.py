@@ -95,13 +95,21 @@ class TestCli(unittest.TestCase):
             "--mode",
             "UEFI",
             "--dry-run",
+            "--force-fallback",
+            "--set-first",
             "-y",
         ])
         self.assertEqual(args_rec.command, "recover")
         self.assertEqual(args_rec.win, "/dev/sda2")
         self.assertEqual(args_rec.esp, "/dev/sda1")
         self.assertTrue(args_rec.dry_run)
+        self.assertTrue(args_rec.force_fallback)
+        self.assertTrue(args_rec.set_first)
         self.assertTrue(args_rec.yes)
+
+        args_def = parser.parse_args(["recover"])
+        self.assertFalse(args_def.force_fallback)
+        self.assertFalse(args_def.set_first)
 
     def test_cli_scan_json(self):
         buf = io.StringIO()
