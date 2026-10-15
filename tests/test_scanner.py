@@ -13,6 +13,7 @@ SAMPLE_LSBLK_JSON = {
             "name": "nvme0n1",
             "type": "disk",
             "pttype": "gpt",
+            "ptuuid": "be6bface-727b-46b3-b29f-8e5e2f65f90e",
             "size": "1000204886016",
             "children": [
                 {
@@ -26,6 +27,7 @@ SAMPLE_LSBLK_JSON = {
                     "size": "288358400",
                     "mountpoint": "/boot/efi",
                     "partflags": "boot,esp",
+                    "start": 2048,
                 },
                 {
                     "name": "nvme0n1p2",
@@ -38,6 +40,7 @@ SAMPLE_LSBLK_JSON = {
                     "size": "400000000000",
                     "mountpoint": "/media/windows",
                     "partflags": "",
+                    "start": 565248,
                 },
                 {
                     "name": "nvme0n1p3",
@@ -50,7 +53,32 @@ SAMPLE_LSBLK_JSON = {
                     "size": "200000000000",
                     "mountpoint": "/",
                     "partflags": "",
+                    "start": 781817856,
                 },
+            ],
+        }
+    ]
+}
+
+SAMPLE_MBR_LSBLK_JSON = {
+    "blockdevices": [
+        {
+            "name": "sda",
+            "type": "disk",
+            "pttype": "dos",
+            "ptuuid": "0x12345678",
+            "size": "500000000000",
+            "children": [
+                {
+                    "name": "sda1",
+                    "path": "/dev/sda1",
+                    "type": "part",
+                    "fstype": "ntfs",
+                    "label": "Windows",
+                    "uuid": "1234567890ABCDEF",
+                    "size": "500000000000",
+                    "start": 2048,
+                }
             ],
         }
     ]
@@ -81,15 +109,34 @@ class TestScanner(unittest.TestCase):
         self.assertTrue(esp.is_esp)
         self.assertEqual(esp.role, PartitionRole.ESP)
         self.assertEqual(esp.mount_point, "/boot/efi")
+        self.assertEqual(esp.disk_guid, "be6bface-727b-46b3-b29f-8e5e2f65f90e")
+        self.assertEqual(esp.partition_offset, 2048 * 512)
 
         win = partitions[1]
         self.assertEqual(win.device, "/dev/nvme0n1p2")
         self.assertEqual(win.fstype, "ntfs")
         self.assertEqual(win.role, PartitionRole.WINDOWS_OS)
+        self.assertEqual(win.disk_guid, "be6bface-727b-46b3-b29f-8e5e2f65f90e")
+        self.assertEqual(win.partition_offset, 565248 * 512)
 
         linux = partitions[2]
         self.assertEqual(linux.device, "/dev/nvme0n1p3")
         self.assertEqual(linux.role, PartitionRole.LINUX)
+        self.assertEqual(linux.partition_offset, 781817856 * 512)
+
+    def test_parse_mbr_lsblk_json(self):
+        scanner = SystemScanner()
+        devices = SAMPLE_MBR_LSBLK_JSON["blockdevices"]
+        partitions = scanner._parse_lsblk_json(devices)
+
+        self.assertEqual(len(partitions), 1)
+        win = partitions[0]
+        self.assertEqual(win.device, "/dev/sda1")
+        self.assertEqual(win.disk, "/dev/sda")
+        self.assertEqual(win.pttype, "dos")
+        self.assertEqual(win.disk_signature, 0x12345678)
+        self.assertIsNone(win.disk_guid)
+        self.assertEqual(win.partition_offset, 2048 * 512)
 
     def test_parse_efibootmgr_output(self):
         entries, order = SystemScanner.parse_efibootmgr_output(SAMPLE_EFIBOOTMGR)

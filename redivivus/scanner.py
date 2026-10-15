@@ -59,7 +59,7 @@ class SystemScanner:
             "-J",
             "-b",
             "-o",
-            "NAME,KNAME,PKNAME,PATH,TYPE,FSTYPE,LABEL,UUID,PARTUUID,SIZE,MOUNTPOINT,MOUNTPOINTS,PARTFLAGS,PTTYPE",
+            "NAME,KNAME,PKNAME,PATH,TYPE,FSTYPE,LABEL,UUID,PARTUUID,SIZE,MOUNTPOINT,MOUNTPOINTS,PARTFLAGS,PTTYPE,PTUUID,START",
         ]
         ret, stdout, stderr = self._run_cmd(cmd)
         if ret != 0 or not stdout.strip():
@@ -74,20 +74,32 @@ class SystemScanner:
             return self._scan_partitions_fallback()
 
     def _parse_lsblk_json(
-        self, devices: List[Dict[str, Any]], parent_disk: Optional[str] = None, parent_pttype: str = "gpt"
+        self,
+        devices: List[Dict[str, Any]],
+        parent_disk: Optional[str] = None,
+        parent_pttype: str = "gpt",
+        parent_ptuuid: Optional[str] = None,
     ) -> List[PartitionInfo]:
         results: List[PartitionInfo] = []
         for dev in devices:
             dev_type = dev.get("type", "")
             dev_path = dev.get("path") or f"/dev/{dev.get('name', '')}"
             pttype = dev.get("pttype") or parent_pttype
+            ptuuid = dev.get("ptuuid") or parent_ptuuid
 
             # If this is a disk device, recurse into partitions
             if dev_type == "disk":
                 disk_path = dev_path
                 children = dev.get("children", [])
                 if children:
-                    results.extend(self._parse_lsblk_json(children, parent_disk=disk_path, parent_pttype=pttype))
+                    results.extend(
+                        self._parse_lsblk_json(
+                            children,
+                            parent_disk=disk_path,
+                            parent_pttype=pttype,
+                            parent_ptuuid=ptuuid,
+                        )
+                    )
                 continue
 
             if dev_type in ("part", "lvm", "crypt"):
@@ -123,6 +135,30 @@ class SystemScanner:
                 elif fstype in ("ext4", "btrfs", "xfs"):
                     role = PartitionRole.LINUX
 
+                # Extract disk identifier (GUID or MBR signature)
+                disk_guid: Optional[str] = None
+                disk_signature: int = 0
+                ptuuid_str = ptuuid or dev.get("ptuuid")
+                if not ptuuid_str and disk:
+                    ptuuid_str = self._get_disk_identifier(disk)
+
+                if pttype == "gpt" or (ptuuid_str and "-" in str(ptuuid_str)):
+                    disk_guid = str(ptuuid_str) if ptuuid_str else None
+                else:
+                    if ptuuid_str:
+                        try:
+                            disk_signature = int(str(ptuuid_str), 16)
+                        except ValueError:
+                            disk_signature = 0
+
+                # Partition offset (in bytes)
+                start_sectors = dev.get("start")
+                if start_sectors is None:
+                    kname = dev.get("kname") or Path(dev_path).name
+                    start_sectors = self._read_sysfs_start(kname)
+
+                partition_offset = int(start_sectors) * 512 if start_sectors is not None else 0
+
                 p = PartitionInfo(
                     device=dev_path,
                     disk=disk,
@@ -139,13 +175,23 @@ class SystemScanner:
                     is_boot_flag=is_boot_flag,
                     pttype=pttype,
                     role=role,
+                    disk_guid=disk_guid,
+                    disk_signature=disk_signature,
+                    partition_offset=partition_offset,
                 )
                 results.append(p)
 
                 # Recurse children if any (e.g. luks/lvm on top of partition)
                 children = dev.get("children", [])
                 if children:
-                    results.extend(self._parse_lsblk_json(children, parent_disk=disk, parent_pttype=pttype))
+                    results.extend(
+                        self._parse_lsblk_json(
+                            children,
+                            parent_disk=disk,
+                            parent_pttype=pttype,
+                            parent_ptuuid=ptuuid,
+                        )
+                    )
 
         return results
 
@@ -172,6 +218,21 @@ class SystemScanner:
                     role = PartitionRole.ESP if is_esp else (
                         PartitionRole.WINDOWS_OS if fstype in ("ntfs", "fuseblk") else PartitionRole.UNKNOWN
                     )
+                    ptuuid_str = current.get("PTUUID") or self._get_disk_identifier(disk)
+                    disk_guid = None
+                    disk_signature = 0
+                    if ptuuid_str and "-" in str(ptuuid_str):
+                        disk_guid = str(ptuuid_str)
+                    elif ptuuid_str:
+                        try:
+                            disk_signature = int(str(ptuuid_str), 16)
+                        except ValueError:
+                            disk_signature = 0
+
+                    kname = Path(dev_path).name
+                    start_sec = self._read_sysfs_start(kname)
+                    partition_offset = int(start_sec) * 512 if start_sec is not None else 0
+
                     results.append(
                         PartitionInfo(
                             device=dev_path,
@@ -183,6 +244,9 @@ class SystemScanner:
                             label=label,
                             is_esp=is_esp,
                             role=role,
+                            disk_guid=disk_guid,
+                            disk_signature=disk_signature,
+                            partition_offset=partition_offset,
                         )
                     )
                 current = {}
@@ -194,12 +258,28 @@ class SystemScanner:
 
         if "DEVNAME" in current:
             dev_path = current["DEVNAME"]
+            disk = self._infer_parent_disk(dev_path)
             fstype = current.get("TYPE", "").lower()
             is_esp = self._check_is_esp(fstype, current.get("LABEL") or "", "", None, current.get("PARTUUID"))
+            ptuuid_str = current.get("PTUUID") or self._get_disk_identifier(disk)
+            disk_guid = None
+            disk_signature = 0
+            if ptuuid_str and "-" in str(ptuuid_str):
+                disk_guid = str(ptuuid_str)
+            elif ptuuid_str:
+                try:
+                    disk_signature = int(str(ptuuid_str), 16)
+                except ValueError:
+                    disk_signature = 0
+
+            kname = Path(dev_path).name
+            start_sec = self._read_sysfs_start(kname)
+            partition_offset = int(start_sec) * 512 if start_sec is not None else 0
+
             results.append(
                 PartitionInfo(
                     device=dev_path,
-                    disk=self._infer_parent_disk(dev_path),
+                    disk=disk,
                     part_num=self._extract_part_num(dev_path),
                     fstype=fstype,
                     uuid=current.get("UUID"),
@@ -207,10 +287,41 @@ class SystemScanner:
                     label=current.get("LABEL"),
                     is_esp=is_esp,
                     role=PartitionRole.ESP if is_esp else PartitionRole.UNKNOWN,
+                    disk_guid=disk_guid,
+                    disk_signature=disk_signature,
+                    partition_offset=partition_offset,
                 )
             )
 
         return results
+
+    @staticmethod
+    def _read_sysfs_start(kname: str) -> Optional[int]:
+        """Reads partition start offset in sectors from /sys/class/block/<kname>/start."""
+        sysfs_path = Path(f"/sys/class/block/{kname}/start")
+        try:
+            if sysfs_path.exists():
+                return int(sysfs_path.read_text().strip())
+        except Exception:
+            pass
+        return None
+
+    def _get_disk_identifier(self, disk_path: str) -> Optional[str]:
+        """Queries disk GUID or MBR signature using lsblk or sgdisk."""
+        # Try lsblk -d -n -o PTUUID <disk_path>
+        ret, stdout, _ = self._run_cmd(["lsblk", "-d", "-n", "-o", "PTUUID", disk_path])
+        if ret == 0 and stdout.strip():
+            return stdout.strip()
+        # Fallback: sgdisk -p <disk_path>
+        ret, stdout, _ = self._run_cmd(["sgdisk", "-p", disk_path])
+        if ret == 0:
+            m = re.search(r"Disk identifier \(GUID\):\s*([0-9a-fA-F-]+)", stdout)
+            if m:
+                return m.group(1).strip()
+            m = re.search(r"Disk identifier \(MBR\):\s*(0x[0-9a-fA-F]+)", stdout)
+            if m:
+                return m.group(1).strip()
+        return None
 
     @staticmethod
     def _check_is_esp(
