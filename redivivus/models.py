@@ -40,6 +40,9 @@ class PartitionInfo:
     is_boot_flag: bool = False
     pttype: str = "gpt"
     role: PartitionRole = PartitionRole.UNKNOWN
+    disk_guid: Optional[str] = None
+    disk_signature: int = 0
+    partition_offset: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -58,7 +61,18 @@ class PartitionInfo:
             "is_boot_flag": self.is_boot_flag,
             "pttype": self.pttype,
             "role": self.role.value,
+            "disk_guid": self.disk_guid,
+            "disk_signature": self.disk_signature,
+            "partition_offset": self.partition_offset,
         }
+
+
+@dataclass
+class DiskInfo:
+    device: str
+    pttype: str = "gpt"
+    disk_guid: Optional[str] = None
+    disk_signature: int = 0
 
 
 @dataclass
@@ -160,7 +174,9 @@ class RecoveryPlan:
     actions: List[ActionItem] = field(default_factory=list)
     backup_esp: bool = True
     install_fallback_bootx64: bool = True
+    force_fallback: bool = False
     update_nvram: bool = True
+    set_first: bool = False
     dry_run: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
@@ -179,7 +195,9 @@ class RecoveryPlan:
             ],
             "backup_esp": self.backup_esp,
             "install_fallback_bootx64": self.install_fallback_bootx64,
+            "force_fallback": self.force_fallback,
             "update_nvram": self.update_nvram,
+            "set_first": self.set_first,
             "dry_run": self.dry_run,
         }
 

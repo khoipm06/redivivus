@@ -15,6 +15,7 @@ from redivivus.models import (
 
 class TestModels(unittest.TestCase):
     def test_partition_info_serialization(self):
+        from redivivus.models import DiskInfo
         p = PartitionInfo(
             device="/dev/sda1",
             disk="/dev/sda",
@@ -31,12 +32,22 @@ class TestModels(unittest.TestCase):
             is_boot_flag=True,
             pttype="gpt",
             role=PartitionRole.ESP,
+            disk_guid="be6bface-727b-46b3-b29f-8e5e2f65f90e",
+            disk_signature=0,
+            partition_offset=1048576,
         )
         d = p.to_dict()
         self.assertEqual(d["device"], "/dev/sda1")
         self.assertEqual(d["fstype"], "vfat")
         self.assertTrue(d["is_esp"])
         self.assertEqual(d["role"], "ESP")
+        self.assertEqual(d["disk_guid"], "be6bface-727b-46b3-b29f-8e5e2f65f90e")
+        self.assertEqual(d["disk_signature"], 0)
+        self.assertEqual(d["partition_offset"], 1048576)
+
+        disk = DiskInfo(device="/dev/sda", pttype="gpt", disk_guid="be6bface-727b-46b3-b29f-8e5e2f65f90e")
+        self.assertEqual(disk.device, "/dev/sda")
+        self.assertEqual(disk.disk_guid, "be6bface-727b-46b3-b29f-8e5e2f65f90e")
 
     def test_windows_installation_compatibility(self):
         p = PartitionInfo(
