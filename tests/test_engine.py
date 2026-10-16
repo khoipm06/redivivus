@@ -283,5 +283,61 @@ class TestEngine(unittest.TestCase):
             self.assertFalse(recorded_calls[0]["set_first"])
 
 
+    def test_execute_recovery_case_insensitive_template_lookup(self):
+        """Verify BCD-Template is found case-insensitively even on lowercase directory trees."""
+        with tempfile.TemporaryDirectory() as tmp_win, tempfile.TemporaryDirectory() as tmp_esp:
+            win_root = Path(tmp_win)
+            esp_root = Path(tmp_esp)
+
+            # Lowercase directory layout
+            cfg_dir = win_root / "windows" / "system32" / "config"
+            efi_dir = win_root / "windows" / "boot" / "efi"
+            cfg_dir.mkdir(parents=True)
+            efi_dir.mkdir(parents=True)
+
+            (efi_dir / "bootmgfw.efi").write_bytes(b"PE_BOOTMGFW")
+            from redivivus.templates.bcd_data import get_uefi_bcd_template
+            (cfg_dir / "bcd-template").write_bytes(get_uefi_bcd_template())
+
+            win_part = PartitionInfo(
+                device="/dev/sda2",
+                disk="/dev/sda",
+                part_num=2,
+                fstype="ntfs",
+                part_uuid="22222222-2222-2222-2222-222222222222",
+                disk_guid="33333333-3333-3333-3333-333333333333",
+                pttype="gpt",
+            )
+            esp_part = PartitionInfo(
+                device="/dev/sda1",
+                disk="/dev/sda",
+                part_num=1,
+                fstype="vfat",
+                part_uuid="11111111-1111-1111-1111-111111111111",
+                disk_guid="33333333-3333-3333-3333-333333333333",
+                pttype="gpt",
+            )
+            win = WindowsInstallation(
+                partition=win_part,
+                windows_dir="/windows",
+                system32_dir="/windows/system32",
+            )
+
+            plan = self.engine.build_plan(
+                windows=win,
+                esp=esp_part,
+                boot_mode=BootMode.UEFI,
+                install_fallback=False,
+                update_nvram=False,
+            )
+
+            result = self.engine.execute_recovery(plan, win_root=win_root, esp_root=esp_root)
+            self.assertTrue(result.success)
+            self.assertEqual(len(result.errors), 0)
+            target_bcd = esp_root / "EFI" / "Microsoft" / "Boot" / "BCD"
+            self.assertTrue(target_bcd.exists())
+            self.assertTrue(self.engine.bcd.is_valid_hive(target_bcd))
+
+
 if __name__ == "__main__":
     unittest.main()

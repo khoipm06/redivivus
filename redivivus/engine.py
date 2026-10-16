@@ -229,16 +229,19 @@ class RecoveryEngine:
 
                 # Step 3: Deploy and configure BCD hive
                 target_bcd = target_ms_boot / "BCD"
-                src_template = win_root / "Windows" / "System32" / "config" / "BCD-Template"
-                if not src_template.exists():
-                    # Check case-insensitively
-                    found = self.deployer._find_file_case_insensitive(win_root / "Windows" / "System32" / "config", "BCD-Template")
-                    if found:
+                src_template = None
+                # Resolve config directory case-insensitively
+                curr: Optional[Path] = win_root
+                for part in ["Windows", "System32", "config"]:
+                    curr = self.deployer._find_dir_case_insensitive(curr, part) if curr else None
+                if curr:
+                    found = self.deployer._find_file_case_insensitive(curr, "BCD-Template")
+                    if found and found.exists():
                         src_template = found
 
                 bcd_ok = self.bcd.deploy_bcd(
                     target_path=target_bcd,
-                    source_template=src_template if src_template.exists() else None,
+                    source_template=src_template if (src_template and src_template.exists()) else None,
                     boot_mode=BootMode.UEFI,
                     windows_partition=plan.windows_target.partition,
                     esp_partition=plan.esp_target,
@@ -343,12 +346,13 @@ class RecoveryEngine:
             )
 
         bcd_file = esp_root / "EFI" / "Microsoft" / "Boot" / "BCD"
-        if self.bcd.is_valid_hive(bcd_file):
+        bcd_info = self.bcd.inspect_bcd(bcd_file)
+        if bcd_info["valid_hive"] and bcd_info["has_bootmgr_guid"]:
             checks.append(
                 VerificationCheck(
                     name="BCD Registry Hive",
                     passed=True,
-                    details=f"Valid regf hive at {bcd_file} ({bcd_file.stat().st_size} bytes)",
+                    details=f"Valid BCD hive with Boot Manager at {bcd_file} ({bcd_info['size_bytes']} bytes)",
                 )
             )
         else:
@@ -356,7 +360,7 @@ class RecoveryEngine:
                 VerificationCheck(
                     name="BCD Registry Hive",
                     passed=False,
-                    details="BCD hive is missing or corrupt in EFI/Microsoft/Boot/",
+                    details="BCD hive is missing, corrupt, or missing Boot Manager entries in EFI/Microsoft/Boot/",
                     severity="ERROR",
                 )
             )
@@ -412,12 +416,13 @@ class RecoveryEngine:
             )
 
         bcd_file = boot_root / "Boot" / "BCD"
-        if self.bcd.is_valid_hive(bcd_file):
+        bcd_info = self.bcd.inspect_bcd(bcd_file)
+        if bcd_info["valid_hive"] and bcd_info["has_bootmgr_guid"]:
             checks.append(
                 VerificationCheck(
                     name="Legacy BCD Registry Hive",
                     passed=True,
-                    details=f"Valid regf hive at {bcd_file}",
+                    details=f"Valid legacy BCD hive with Boot Manager at {bcd_file}",
                 )
             )
         else:
@@ -425,7 +430,7 @@ class RecoveryEngine:
                 VerificationCheck(
                     name="Legacy BCD Registry Hive",
                     passed=False,
-                    details="BCD hive is missing in /Boot/",
+                    details="BCD hive is missing, corrupt, or missing Boot Manager entries in /Boot/",
                     severity="ERROR",
                 )
             )
