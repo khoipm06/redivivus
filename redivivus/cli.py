@@ -450,7 +450,7 @@ def cmd_diagnose(args: argparse.Namespace) -> int:
         for rec in recommendations:
             print(f"  {bold_yellow('[*]')} {rec}")
 
-    if not issues and not warnings:
+    if not issues:
         print(bold_green("  [+] Diagnosis completed: System partitions appear healthy for Windows boot recovery."))
 
     print()

@@ -111,7 +111,7 @@ sudo redivivus scan
 Output format (example synthetic mock report on generic dual-boot storage):
 ```text
 ================================================================================
-  Redivivus Hardware & Boot Diagnostic Report (v0.1.5 - Synthetic Fixture)
+  Redivivus Hardware & Boot Diagnostic Report
 ================================================================================
 
   • Firmware Environment : UEFI
@@ -225,28 +225,6 @@ Redivivus is built with defense-in-depth safety:
 - **Read-Only Probing**: Inspects Windows partitions via read-only mounts.
 - **Automatic Backups**: Preserves prior boot structures prior to modification.
 - **Fail-Safe Checks**: Verifies binary headers and PE32+ structures before marking any operation complete.
-
----
-
-## CI/CD & Release Workflow
-
-Redivivus uses automated GitHub Actions workflows for continuous integration and releases:
-
-- **Continuous Integration (`.github/workflows/ci.yml`)**:
-  - Automatically triggered on every `push` and `pull_request` to `main`.
-  - Runs full test suite matrix across Python 3.8, 3.9, 3.10, 3.11, 3.12, and 3.13 on `ubuntu-latest`.
-  - Verifies distribution packaging with `python -m build`.
-
-- **Release Flow (`.github/workflows/release.yml`)**:
-  - Automatically triggered when pushing a semantic version tag (e.g. `v0.1.5`).
-  - Builds binary wheels (`.whl`) and source distributions (`.tar.gz`).
-  - Publishes a GitHub Release with auto-generated changelog notes and attaches distribution artifacts.
-
-To cut a new release:
-```bash
-git tag -a v0.1.5 -m "Release v0.1.5"
-git push origin v0.1.5
-```
 
 ---
 
