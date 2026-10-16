@@ -121,10 +121,19 @@ class NvramManager:
             new_win = self.find_windows_entry(updated_entries)
             if new_win:
                 actions.append(f"Successfully verified created entry Boot{new_win.boot_num}")
-                if set_first and updated_order and updated_order[0] != new_win.boot_num:
-                    new_order = [new_win.boot_num] + [x for x in updated_order if x != new_win.boot_num]
-                    order_cmd = ["efibootmgr", "-o", ",".join(new_order)]
-                    actions.append(f"Set boot order (Windows first): {' '.join(order_cmd)}")
-                    self._run_cmd(order_cmd)
+                if set_first:
+                    if updated_order and updated_order[0] != new_win.boot_num:
+                        new_order = [new_win.boot_num] + [x for x in updated_order if x != new_win.boot_num]
+                        order_cmd = ["efibootmgr", "-o", ",".join(new_order)]
+                        actions.append(f"Set boot order (Windows first): {' '.join(order_cmd)}")
+                        self._run_cmd(order_cmd)
+                else:
+                    # Linux efibootmgr -c automatically inserts new entry at index 0.
+                    # When set_first is False, restore initial boot order with new entry appended at the end.
+                    if current_order and (updated_order and updated_order[0] == new_win.boot_num):
+                        new_order = [x for x in current_order if x != new_win.boot_num] + [new_win.boot_num]
+                        order_cmd = ["efibootmgr", "-o", ",".join(new_order)]
+                        actions.append(f"Preserve boot order (Linux first, Windows appended): {' '.join(order_cmd)}")
+                        self._run_cmd(order_cmd)
 
         return len(errors) == 0, actions, errors
