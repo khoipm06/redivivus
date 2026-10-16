@@ -305,5 +305,60 @@ class TestCli(unittest.TestCase):
             self.assertEqual(ret, 1)
 
 
+    @patch.object(SystemScanner, "run_full_scan", return_value=_create_mock_scan_report())
+    def test_cli_diagnose_tool_warnings(self, _mock_scan):
+        """Diagnose shows warnings when tools like hivexsh or efibootmgr are missing, but does not error."""
+        with patch("shutil.which", return_value=None):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                ret = main(["diagnose"])
+            output = buf.getvalue()
+            self.assertEqual(ret, 0)
+            self.assertIn("System Warnings", output)
+            self.assertIn("hivexsh", output)
+
+    @patch.object(SystemScanner, "run_full_scan")
+    def test_cli_recover_bios_mode_mount_rw(self, mock_scan):
+        """In BIOS mode, recover attempts to mount unmounted Windows partition with rw option."""
+        # Unmounted Windows partition on BIOS
+        win_part = PartitionInfo(
+            device="/dev/sda1",
+            disk="/dev/sda",
+            part_num=1,
+            fstype="ntfs",
+            mount_point=None,
+            is_mounted=False,
+            pttype="dos",
+        )
+        report = ScanReport(
+            firmware_uefi=False,
+            system_boot_mode=BootMode.BIOS,
+            partitions=[win_part],
+            windows_installations=[WindowsInstallation(partition=win_part)],
+            esp_partitions=[],
+            nvram_entries=[],
+            current_boot_order=[],
+        )
+        mock_scan.return_value = report
+
+        commands_run = []
+        def mock_cmd(cmd):
+            commands_run.append(list(cmd))
+            return 0, "", ""
+
+        with patch.object(SystemScanner, "_default_run_cmd", side_effect=mock_cmd):
+            with patch("os.geteuid", return_value=0):
+                # When prompt for proceed: answer n
+                with patch("builtins.input", return_value="n"):
+                    buf = io.StringIO()
+                    with redirect_stdout(buf):
+                        ret = main(["recover", "--mode", "BIOS"])
+                    self.assertEqual(ret, 0)
+                    # Check mount command had rw
+                    mount_cmds = [c for c in commands_run if len(c) > 0 and c[0] == "mount"]
+                    self.assertTrue(any("rw" in c for c in mount_cmds))
+
+
 if __name__ == "__main__":
     unittest.main()
+

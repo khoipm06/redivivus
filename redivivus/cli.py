@@ -410,6 +410,7 @@ def cmd_diagnose(args: argparse.Namespace) -> int:
     print(bold_cyan(f"{banner}\n"))
 
     issues: List[str] = []
+    warnings: List[str] = []
     recommendations: List[str] = []
 
     if not report.windows_installations:
@@ -423,17 +424,33 @@ def cmd_diagnose(args: argparse.Namespace) -> int:
 
         has_win_nvram = any(n.is_windows_manager() for n in report.nvram_entries)
         if not has_win_nvram:
-            issues.append("Warning: No 'Windows Boot Manager' NVRAM entry found in UEFI firmware.")
+            warnings.append("Warning: No 'Windows Boot Manager' NVRAM entry found in UEFI firmware.")
             recommendations.append("Run 'redivivus recover' to register and prioritize Windows in UEFI NVRAM.")
+
+    if not shutil.which("hivexsh"):
+        warnings.append("Warning: 'hivexsh' tool is not found in PATH.")
+        recommendations.append("Install 'hivex' (e.g. 'sudo dnf install hivex' or 'sudo apt install libhivex-bin') for advanced BCD editing.")
+
+    if report.firmware_uefi and not shutil.which("efibootmgr"):
+        warnings.append("Warning: 'efibootmgr' tool is not found in PATH.")
+        recommendations.append("Install 'efibootmgr' to allow updating UEFI NVRAM boot entries.")
 
     if issues:
         print(bold_red("[ Detected Issues ]"))
         for iss in issues:
             print(f"  {bold_red('[!]')} {iss}")
+
+    if warnings:
+        print(bold_yellow("[ System Warnings ]"))
+        for w in warnings:
+            print(f"  {bold_yellow('[?]')} {w}")
+
+    if recommendations:
         print(bold_yellow("\n[ Recommendations ]"))
         for rec in recommendations:
             print(f"  {bold_yellow('[*]')} {rec}")
-    else:
+
+    if not issues and not warnings:
         print(bold_green("  [+] Diagnosis completed: System partitions appear healthy for Windows boot recovery."))
 
     print()
@@ -512,7 +529,8 @@ def cmd_recover(args: argparse.Namespace) -> int:
     if not win_mount and not args.dry_run:
         temp_win_dir = f"/tmp/redivivus_win_{os.getpid()}"
         os.makedirs(temp_win_dir, exist_ok=True)
-        ret, _, _ = scanner._run_cmd(["mount", "-o", "ro", windows_target.partition.device, temp_win_dir])
+        mount_opts = "rw" if boot_mode == BootMode.BIOS else "ro"
+        ret, _, _ = scanner._run_cmd(["mount", "-o", mount_opts, windows_target.partition.device, temp_win_dir])
         if ret != 0:
             print(bold_red(f"Error: Cannot mount Windows partition {windows_target.partition.device}. Run with sudo."))
             return 1
