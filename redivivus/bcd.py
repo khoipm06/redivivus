@@ -214,8 +214,64 @@ class BcdManager:
                 timeout=timeout,
             )
 
-        # Fallback: standalone verification / byte check
+        # Fallback: in-place binary template patch when hivexsh is unavailable
+        if boot_mode == BootMode.UEFI:
+            return self._patch_uefi_template_binary(
+                target_path=target_path,
+                windows_partition=windows_partition,
+                esp_partition=esp_partition,
+            )
+
         return self.is_valid_hive(target_path)
+
+    def _patch_uefi_template_binary(
+        self,
+        target_path: Path,
+        windows_partition: Optional[PartitionInfo] = None,
+        esp_partition: Optional[PartitionInfo] = None,
+    ) -> bool:
+        """In-place binary replacement of null 88-byte partition device elements in canonical UEFI template."""
+        if not target_path.exists():
+            return False
+        try:
+            content = bytearray(target_path.read_bytes())
+            placeholder = (
+                b"\x00" * 16
+                + b"\x06\x00\x00\x00\x00\x00\x00\x00\x48\x00\x00\x00\x00\x00\x00\x00"
+                + b"\x00" * 56
+            )
+            count = content.count(placeholder)
+            if count != 3:
+                return self.is_valid_hive(target_path)
+
+            esp_elem = self.construct_partition_device_element(
+                part_uuid=esp_partition.part_uuid if esp_partition else None,
+                disk_guid=esp_partition.disk_guid if esp_partition else None,
+                partition_offset=getattr(esp_partition, "partition_offset", 0) if esp_partition else 0,
+                disk_signature=getattr(esp_partition, "disk_signature", 0) if esp_partition else 0,
+                is_gpt=True,
+            )
+            win_elem = self.construct_partition_device_element(
+                part_uuid=windows_partition.part_uuid if windows_partition else None,
+                disk_guid=windows_partition.disk_guid if windows_partition else None,
+                partition_offset=getattr(windows_partition, "partition_offset", 0) if windows_partition else 0,
+                disk_signature=getattr(windows_partition, "disk_signature", 0) if windows_partition else 0,
+                is_gpt=True,
+            )
+
+            pos1 = content.find(placeholder)
+            content[pos1 : pos1 + 88] = esp_elem
+
+            pos2 = content.find(placeholder, pos1 + 88)
+            content[pos2 : pos2 + 88] = win_elem
+
+            pos3 = content.find(placeholder, pos2 + 88)
+            content[pos3 : pos3 + 88] = win_elem
+
+            target_path.write_bytes(bytes(content))
+            return self.is_valid_hive(target_path)
+        except Exception:
+            return False
 
     def _configure_with_hivex(
         self,

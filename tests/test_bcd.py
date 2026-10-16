@@ -328,5 +328,56 @@ class TestBcd(unittest.TestCase):
             self.assertTrue(self.mgr.is_valid_hive(dest))
 
 
+    def test_deploy_uefi_bcd_binary_patch_fallback(self):
+        """Verify binary template patch fallback when hivexsh is unavailable."""
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir) / "BCD"
+            win = PartitionInfo(
+                device="/dev/sda2",
+                disk="/dev/sda",
+                part_num=2,
+                fstype="ntfs",
+                part_uuid="11111111-2222-3333-4444-555555555555",
+                disk_guid="66666666-7777-8888-9999-000000000000",
+                pttype="gpt",
+            )
+            esp = PartitionInfo(
+                device="/dev/sda1",
+                disk="/dev/sda",
+                part_num=1,
+                fstype="vfat",
+                part_uuid="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                disk_guid="66666666-7777-8888-9999-000000000000",
+                pttype="gpt",
+            )
+
+            with patch("shutil.which", return_value=None):
+                ok = self.mgr.deploy_bcd(
+                    target_path=target,
+                    boot_mode=BootMode.UEFI,
+                    windows_partition=win,
+                    esp_partition=esp,
+                )
+                self.assertTrue(ok)
+
+            # Verify target content has patched GUID bytes
+            content = target.read_bytes()
+            win_guid_le = uuid.UUID(win.part_uuid).bytes_le
+            esp_guid_le = uuid.UUID(esp.part_uuid).bytes_le
+
+            self.assertIn(win_guid_le, content)
+            self.assertIn(esp_guid_le, content)
+
+            # Ensure all 3 placeholder null blocks are gone
+            placeholder = (
+                b"\x00" * 16
+                + b"\x06\x00\x00\x00\x00\x00\x00\x00\x48\x00\x00\x00\x00\x00\x00\x00"
+                + b"\x00" * 56
+            )
+            self.assertEqual(content.count(placeholder), 0)
+
+
 if __name__ == "__main__":
     unittest.main()
