@@ -14,8 +14,16 @@ from redivivus.cli import (
 )
 
 
+"""
+User Story 6 (US6) - CLI Interface, Pretty Printing & Safety Guards
+Verify command-line parsing, terminal table formatting, JSON serialization,
+and root privilege enforcement for non-destructive operations.
+"""
+
+
 class TestCli(unittest.TestCase):
     def test_format_markdown_table(self):
+        """US6-AC2: Format standard Markdown pipe table for reports and logs."""
         headers = ["Col1", "Col2"]
         rows = [["ValA", "ValB"], ["LongValA", "B"]]
         table = format_markdown_table(headers, rows)
@@ -24,6 +32,7 @@ class TestCli(unittest.TestCase):
         self.assertIn("| LongValA", table)
 
     def test_format_cli_table_basic(self):
+        """US6-AC2: Format Unicode box-drawing tables with exact column borders."""
         headers = ["Col1", "Col2"]
         rows = [["ValA", "ValB"], ["LongValA", "B"]]
         target_width = 80
@@ -37,13 +46,14 @@ class TestCli(unittest.TestCase):
         self.assertIn("LongValA", table)
 
     def test_format_cli_table_uniform_total_width(self):
+        """US6-AC2: Ensure consistent terminal table width across disparate schemas."""
         # Multiple tables with completely different column counts and content
         table1_headers = ["Device", "Product", "UEFI", "Legacy", "BCD-Template", "Mount"]
-        table1_rows = [["/dev/nvme0n1p2", "Windows (NT)", "Yes", "Yes", "Found", "/mnt/win"]]
+        table1_rows = [["/dev/sda2", "Windows (NT)", "Yes", "Yes", "Found", "/mnt/win"]]
 
         table2_headers = ["Category", "Action Description", "Target / Command"]
         table2_rows = [
-            ["NVRAM", "Register and prioritize Windows entry", "efibootmgr -c -d /dev/nvme0n1 -p 1 -L Windows -l \\bootmgfw.efi"]
+            ["NVRAM", "Register and prioritize Windows entry", "efibootmgr -c -d /dev/sda -p 1 -L Windows -l \\bootmgfw.efi"]
         ]
 
         table3_headers = ["Check", "Status", "Details"]

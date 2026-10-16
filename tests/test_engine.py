@@ -9,6 +9,14 @@ from redivivus.models import BootMode, PartitionInfo, PartitionRole, WindowsInst
 from redivivus.nvram import NvramManager
 
 
+"""
+User Story 6 (US6) - End-to-End Recovery Orchestration & Safety Verification
+As an administrator recovering Windows bootability,
+I want the recovery engine to plan, verify, and orchestrate bootloader restoration,
+respecting dry-run simulation mode, dual-boot boot priorities, and permission boundaries.
+"""
+
+
 class TestEngine(unittest.TestCase):
     def setUp(self):
         # Mock NVRAM manager to prevent running actual efibootmgr
@@ -37,16 +45,17 @@ class TestEngine(unittest.TestCase):
         (pcat_dir / "boot.sdi").write_bytes(b"SDI_DATA")
 
     def test_build_plan_uefi(self):
+        """US6-AC1: Build structured execution plan for UEFI recovery with verified actions."""
         win_part = PartitionInfo(
-            device="/dev/nvme0n1p2",
-            disk="/dev/nvme0n1",
+            device="/dev/sda2",
+            disk="/dev/sda",
             part_num=2,
             fstype="ntfs",
             role=PartitionRole.WINDOWS_OS,
         )
         esp_part = PartitionInfo(
-            device="/dev/nvme0n1p1",
-            disk="/dev/nvme0n1",
+            device="/dev/sda1",
+            disk="/dev/sda",
             part_num=1,
             fstype="vfat",
             role=PartitionRole.ESP,
@@ -185,15 +194,16 @@ class TestEngine(unittest.TestCase):
             self.assertGreater(len(result.errors), 0)
 
     def test_build_plan_set_first_default_false(self):
+        """US5-AC2: Default recovery plan preserves dual-boot order with set_first=False."""
         win_part = PartitionInfo(
-            device="/dev/nvme0n1p2",
-            disk="/dev/nvme0n1",
+            device="/dev/sda2",
+            disk="/dev/sda",
             part_num=2,
             fstype="ntfs",
         )
         esp_part = PartitionInfo(
-            device="/dev/nvme0n1p1",
-            disk="/dev/nvme0n1",
+            device="/dev/sda1",
+            disk="/dev/sda",
             part_num=1,
             fstype="vfat",
         )
@@ -212,15 +222,16 @@ class TestEngine(unittest.TestCase):
         self.assertIn("preserving existing boot order", nvram_actions[0].description)
 
     def test_build_plan_set_first_true_and_force_fallback(self):
+        """US5-AC2 & US4-AC3: Explicit flags override dual-boot safety defaults."""
         win_part = PartitionInfo(
-            device="/dev/nvme0n1p2",
-            disk="/dev/nvme0n1",
+            device="/dev/sda2",
+            disk="/dev/sda",
             part_num=2,
             fstype="ntfs",
         )
         esp_part = PartitionInfo(
-            device="/dev/nvme0n1p1",
-            disk="/dev/nvme0n1",
+            device="/dev/sda1",
+            disk="/dev/sda",
             part_num=1,
             fstype="vfat",
         )

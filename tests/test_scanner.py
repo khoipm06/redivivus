@@ -10,11 +10,64 @@ from redivivus.scanner import SystemScanner
 SAMPLE_LSBLK_JSON = {
     "blockdevices": [
         {
+            "name": "sda",
+            "type": "disk",
+            "pttype": "gpt",
+            "ptuuid": "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d",
+            "size": "500107862016",
+            "children": [
+                {
+                    "name": "sda1",
+                    "path": "/dev/sda1",
+                    "type": "part",
+                    "fstype": "vfat",
+                    "label": "ESP",
+                    "uuid": "A1B2-C3D4",
+                    "partuuid": "c12a7328-f81f-11d2-ba4b-00a0c93ec93b",
+                    "size": "536870912",
+                    "mountpoint": "/mnt/esp",
+                    "partflags": "boot,esp",
+                    "start": 2048,
+                },
+                {
+                    "name": "sda2",
+                    "path": "/dev/sda2",
+                    "type": "part",
+                    "fstype": "ntfs",
+                    "label": "Windows 11",
+                    "uuid": "4E1A2B3C4D5E6F70",
+                    "partuuid": "550e8400-e29b-41d4-a716-446655440000",
+                    "size": "107374182400",
+                    "mountpoint": "/mnt/windows",
+                    "partflags": "",
+                    "start": 1050624,
+                },
+                {
+                    "name": "sda3",
+                    "path": "/dev/sda3",
+                    "type": "part",
+                    "fstype": "ext4",
+                    "label": "LinuxRoot",
+                    "uuid": "fedcba98-7654-3210-fedc-ba9876543210",
+                    "partuuid": "660e8400-e29b-41d4-a716-446655440000",
+                    "size": "53687091200",
+                    "mountpoint": "/",
+                    "partflags": "",
+                    "start": 210765824,
+                },
+            ],
+        }
+    ]
+}
+
+SAMPLE_NVME_LSBLK_JSON = {
+    "blockdevices": [
+        {
             "name": "nvme0n1",
             "type": "disk",
             "pttype": "gpt",
-            "ptuuid": "be6bface-727b-46b3-b29f-8e5e2f65f90e",
-            "size": "1000204886016",
+            "ptuuid": "b2c3d4e5-f6a7-8b9c-0d1e-2f3a4b5c6d7e",
+            "size": "256060514304",
             "children": [
                 {
                     "name": "nvme0n1p1",
@@ -22,9 +75,9 @@ SAMPLE_LSBLK_JSON = {
                     "type": "part",
                     "fstype": "vfat",
                     "label": "ESP",
-                    "uuid": "A1B2-C3D4",
+                    "uuid": "B2C3-D4E5",
                     "partuuid": "c12a7328-f81f-11d2-ba4b-00a0c93ec93b",
-                    "size": "288358400",
+                    "size": "536870912",
                     "mountpoint": "/boot/efi",
                     "partflags": "boot,esp",
                     "start": 2048,
@@ -34,26 +87,13 @@ SAMPLE_LSBLK_JSON = {
                     "path": "/dev/nvme0n1p2",
                     "type": "part",
                     "fstype": "ntfs",
-                    "label": "Windows 11",
-                    "uuid": "4E1A2B3C4D5E6F70",
-                    "partuuid": "550e8400-e29b-41d4-a716-446655440000",
-                    "size": "400000000000",
-                    "mountpoint": "/media/windows",
+                    "label": "Windows OS",
+                    "uuid": "9999999999999999",
+                    "partuuid": "88888888-8888-8888-8888-888888888888",
+                    "size": "100000000000",
+                    "mountpoint": "/mnt/win",
                     "partflags": "",
-                    "start": 565248,
-                },
-                {
-                    "name": "nvme0n1p3",
-                    "path": "/dev/nvme0n1p3",
-                    "type": "part",
-                    "fstype": "ext4",
-                    "label": "LinuxRoot",
-                    "uuid": "fedcba98-7654-3210-fedc-ba9876543210",
-                    "partuuid": "660e8400-e29b-41d4-a716-446655440000",
-                    "size": "200000000000",
-                    "mountpoint": "/",
-                    "partflags": "",
-                    "start": 781817856,
+                    "start": 1050624,
                 },
             ],
         }
@@ -90,12 +130,22 @@ Timeout: 0 seconds
 BootOrder: 0002,0001,0000
 Boot0000* Windows Boot Manager	HD(1,GPT,c12a7328-f81f-11d2-ba4b-00a0c93ec93b,0x800,0x89000)/File(\\EFI\\Microsoft\\Boot\\bootmgfw.efi)WINDOWS.........x...B.C.D.O.B.J.E.C.T...
 Boot0001  Linux Boot Manager	HD(1,GPT,c12a7328-f81f-11d2-ba4b-00a0c93ec93b,0x800,0x89000)/File(\\EFI\\systemd\\systemd-bootx64.efi)
-Boot0002* Fedora	HD(1,GPT,c12a7328-f81f-11d2-ba4b-00a0c93ec93b,0x800,0x89000)/File(\\EFI\\fedora\\shimx64.efi)
+Boot0002* Linux Bootloader	HD(1,GPT,c12a7328-f81f-11d2-ba4b-00a0c93ec93b,0x800,0x89000)/File(\\EFI\\linux\\shimx64.efi)
+"""
+
+
+"""
+User Story 1 (US1) - Storage & Bootloader Discovery
+As a rescue/live Linux operator,
+I want Redivivus to discover all storage devices (SATA, NVMe, USB, Virtual VirtIO),
+identify Windows installations (UEFI and Legacy), extract partition byte offsets and disk GUIDs,
+and inspect NVRAM entries without relying on host-specific paths or hardware names.
 """
 
 
 class TestScanner(unittest.TestCase):
     def test_parse_lsblk_json(self):
+        """US1-AC1: Extract GPT partitions, roles, mount points, disk GUIDs, and byte offsets."""
         scanner = SystemScanner()
         devices = SAMPLE_LSBLK_JSON["blockdevices"]
         partitions = scanner._parse_lsblk_json(devices)
@@ -103,28 +153,48 @@ class TestScanner(unittest.TestCase):
         self.assertEqual(len(partitions), 3)
 
         esp = partitions[0]
+        self.assertEqual(esp.device, "/dev/sda1")
+        self.assertEqual(esp.disk, "/dev/sda")
+        self.assertEqual(esp.part_num, 1)
+        self.assertTrue(esp.is_esp)
+        self.assertEqual(esp.role, PartitionRole.ESP)
+        self.assertEqual(esp.mount_point, "/mnt/esp")
+        self.assertEqual(esp.disk_guid, "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d")
+        self.assertEqual(esp.partition_offset, 2048 * 512)
+
+        win = partitions[1]
+        self.assertEqual(win.device, "/dev/sda2")
+        self.assertEqual(win.fstype, "ntfs")
+        self.assertEqual(win.role, PartitionRole.WINDOWS_OS)
+        self.assertEqual(win.disk_guid, "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d")
+        self.assertEqual(win.partition_offset, 1050624 * 512)
+
+        linux = partitions[2]
+        self.assertEqual(linux.device, "/dev/sda3")
+        self.assertEqual(linux.role, PartitionRole.LINUX)
+        self.assertEqual(linux.partition_offset, 210765824 * 512)
+
+    def test_parse_nvme_lsblk_json(self):
+        """US1-AC1: Parse NVMe devices (p-separated partition indexing) and offsets."""
+        scanner = SystemScanner()
+        devices = SAMPLE_NVME_LSBLK_JSON["blockdevices"]
+        partitions = scanner._parse_lsblk_json(devices)
+
+        self.assertEqual(len(partitions), 2)
+        esp = partitions[0]
         self.assertEqual(esp.device, "/dev/nvme0n1p1")
         self.assertEqual(esp.disk, "/dev/nvme0n1")
         self.assertEqual(esp.part_num, 1)
         self.assertTrue(esp.is_esp)
-        self.assertEqual(esp.role, PartitionRole.ESP)
-        self.assertEqual(esp.mount_point, "/boot/efi")
-        self.assertEqual(esp.disk_guid, "be6bface-727b-46b3-b29f-8e5e2f65f90e")
-        self.assertEqual(esp.partition_offset, 2048 * 512)
 
         win = partitions[1]
         self.assertEqual(win.device, "/dev/nvme0n1p2")
-        self.assertEqual(win.fstype, "ntfs")
+        self.assertEqual(win.disk, "/dev/nvme0n1")
+        self.assertEqual(win.part_num, 2)
         self.assertEqual(win.role, PartitionRole.WINDOWS_OS)
-        self.assertEqual(win.disk_guid, "be6bface-727b-46b3-b29f-8e5e2f65f90e")
-        self.assertEqual(win.partition_offset, 565248 * 512)
-
-        linux = partitions[2]
-        self.assertEqual(linux.device, "/dev/nvme0n1p3")
-        self.assertEqual(linux.role, PartitionRole.LINUX)
-        self.assertEqual(linux.partition_offset, 781817856 * 512)
 
     def test_parse_mbr_lsblk_json(self):
+        """US1-AC2: Extract MBR partitions, start sector offsets, and uint32 disk signatures."""
         scanner = SystemScanner()
         devices = SAMPLE_MBR_LSBLK_JSON["blockdevices"]
         partitions = scanner._parse_lsblk_json(devices)
@@ -139,6 +209,7 @@ class TestScanner(unittest.TestCase):
         self.assertEqual(win.partition_offset, 2048 * 512)
 
     def test_parse_efibootmgr_output(self):
+        """US1-AC3: Parse standard efibootmgr boot entries and boot order sequence."""
         entries, order = SystemScanner.parse_efibootmgr_output(SAMPLE_EFIBOOTMGR)
 
         self.assertEqual(order, ["0002", "0001", "0000"])
@@ -156,19 +227,21 @@ class TestScanner(unittest.TestCase):
         self.assertFalse(linux_entry.active)
 
     def test_parse_efibootmgr_raw_efi_path(self):
+        """US1-AC3: Parse raw escaped /\\EFI\\... firmware path syntax without regex failure."""
         sample_output = (
             "BootCurrent: 0002\n"
             "BootOrder: 0000,0005\n"
-            r"Boot0000* Fedora	HD(1,GPT,0000003f-3190-8b95-203c-db017e000000,0x800,0x89800)/\EFI\fedora\shimx64.efi" + "\n"
-            r"Boot0005* Windows Boot Manager	HD(1,GPT,0000003f-3190-8b95-203c-db017e000000,0x800,0x89800)/\EFI\Microsoft\Boot\bootmgfw.efi57494e444f575300"
+            r"Boot0000* Linux	HD(1,GPT,11111111-2222-3333-4444-555555555555,0x800,0x89800)/\EFI\linux\shimx64.efi" + "\n"
+            r"Boot0005* Windows Boot Manager	HD(1,GPT,11111111-2222-3333-4444-555555555555,0x800,0x89800)/\EFI\Microsoft\Boot\bootmgfw.efi57494e444f575300"
         )
         entries, order = SystemScanner.parse_efibootmgr_output(sample_output)
         self.assertEqual(len(entries), 2)
-        self.assertEqual(entries[0].file_path, r"\EFI\fedora\shimx64.efi")
+        self.assertEqual(entries[0].file_path, r"\EFI\linux\shimx64.efi")
         self.assertEqual(entries[1].file_path, r"\EFI\Microsoft\Boot\bootmgfw.efi")
         self.assertTrue(entries[1].is_windows_manager())
 
     def test_inspect_windows_root(self):
+        """US1-AC4: Inspect Windows directory tree for ntoskrnl, winload.efi, and boot assets."""
         scanner = SystemScanner()
         with tempfile.TemporaryDirectory() as tmpdir:
             tmppath = Path(tmpdir)

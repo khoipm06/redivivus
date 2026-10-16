@@ -12,11 +12,26 @@ from redivivus.bcd import BcdManager
 from redivivus.models import BootMode, PartitionInfo
 
 
+"""
+User Story 2 (US2) - UEFI BCD Synthesis
+As a user with a corrupted or missing BCD hive on UEFI,
+I want Redivivus to synthesize a valid Windows BCD containing standard 88-byte GPT HardDisk
+partition device elements for Boot Manager ({9dea862c-5cdd-4e70-acc1-f32b344d4795}) and Windows OS Loader,
+pointing to \\EFI\\Microsoft\\Boot\\bootmgfw.efi and \\Windows\\system32\\winload.efi respectively.
+
+User Story 3 (US3) - Legacy BIOS / MBR BCD Synthesis
+As a user with a corrupted BCD on an MBR disk,
+I want Redivivus to synthesize a valid PCAT BCD hive with MBR partition start offset and disk signature,
+pointing to \\bootmgr and \\Windows\\system32\\winload.exe.
+"""
+
+
 class TestBcd(unittest.TestCase):
     def setUp(self):
         self.mgr = BcdManager()
 
     def test_is_valid_hive(self):
+        """Verify Windows Registry 'regf' magic header validation."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmppath = Path(tmpdir)
             invalid_file = tmppath / "invalid.dat"
@@ -32,8 +47,9 @@ class TestBcd(unittest.TestCase):
             self.assertFalse(self.mgr.is_valid_hive(short_file))
 
     def test_construct_partition_device_element_gpt(self):
+        """US2-AC1: Build 88-byte GPT HardDisk partition element with LE partition and disk GUIDs."""
         part_uuid_str = "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
-        disk_guid_str = "be6bface-727b-46b3-b29f-8e5e2f65f90e"
+        disk_guid_str = "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d"
         elem = self.mgr.construct_partition_device_element(
             part_uuid=part_uuid_str,
             disk_guid=disk_guid_str,
@@ -58,7 +74,7 @@ class TestBcd(unittest.TestCase):
         # Verify Disk GUID endianness
         expected_disk_le = uuid.UUID(disk_guid_str).bytes_le
         self.assertEqual(elem[0x38:0x48], expected_disk_le)
-        self.assertEqual(elem[0x38:0x3c], bytes.fromhex("cefa6bbe"))
+        self.assertEqual(elem[0x38:0x3c], bytes.fromhex("d4c3b2a1"))
 
         # Verify unused regions are zeroed
         self.assertEqual(elem[0x00:0x10], bytes(16))
@@ -111,21 +127,21 @@ class TestBcd(unittest.TestCase):
             target = tmppath / "EFI" / "Microsoft" / "Boot" / "BCD"
 
             esp = PartitionInfo(
-                device="/dev/nvme0n1p1",
-                disk="/dev/nvme0n1",
+                device="/dev/sda1",
+                disk="/dev/sda",
                 part_num=1,
                 fstype="vfat",
                 part_uuid="c12a7328-f81f-11d2-ba4b-00a0c93ec93b",
-                disk_guid="be6bface-727b-46b3-b29f-8e5e2f65f90e",
+                disk_guid="a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d",
                 pttype="gpt",
             )
             win = PartitionInfo(
-                device="/dev/nvme0n1p2",
-                disk="/dev/nvme0n1",
+                device="/dev/sda2",
+                disk="/dev/sda",
                 part_num=2,
                 fstype="ntfs",
                 part_uuid="550e8400-e29b-41d4-a716-446655440000",
-                disk_guid="be6bface-727b-46b3-b29f-8e5e2f65f90e",
+                disk_guid="a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d",
                 pttype="gpt",
             )
 
@@ -272,8 +288,8 @@ class TestBcd(unittest.TestCase):
 
             # Reconfigure directly with configure_bcd
             win = PartitionInfo(
-                device="/dev/nvme0n1p2",
-                disk="/dev/nvme0n1",
+                device="/dev/sda2",
+                disk="/dev/sda",
                 part_num=2,
                 fstype="ntfs",
                 part_uuid="77777777-7777-7777-7777-777777777777",

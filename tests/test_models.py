@@ -13,8 +13,16 @@ from redivivus.models import (
 )
 
 
+"""
+User Story 1 & 6 (US1, US6) - Data Models for Multi-Architecture Storage & Boot Entries
+Verify serialization, disk GUID/signature properties, Windows installation compatibility flags,
+and EFI boot manager entry detection across generic storage hardware.
+"""
+
+
 class TestModels(unittest.TestCase):
     def test_partition_info_serialization(self):
+        """US1-AC1: PartitionInfo serialization preserves 64-bit offsets, disk GUIDs, and roles."""
         from redivivus.models import DiskInfo
         p = PartitionInfo(
             device="/dev/sda1",
@@ -32,7 +40,7 @@ class TestModels(unittest.TestCase):
             is_boot_flag=True,
             pttype="gpt",
             role=PartitionRole.ESP,
-            disk_guid="be6bface-727b-46b3-b29f-8e5e2f65f90e",
+            disk_guid="a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d",
             disk_signature=0,
             partition_offset=1048576,
         )
@@ -41,18 +49,19 @@ class TestModels(unittest.TestCase):
         self.assertEqual(d["fstype"], "vfat")
         self.assertTrue(d["is_esp"])
         self.assertEqual(d["role"], "ESP")
-        self.assertEqual(d["disk_guid"], "be6bface-727b-46b3-b29f-8e5e2f65f90e")
+        self.assertEqual(d["disk_guid"], "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d")
         self.assertEqual(d["disk_signature"], 0)
         self.assertEqual(d["partition_offset"], 1048576)
 
-        disk = DiskInfo(device="/dev/sda", pttype="gpt", disk_guid="be6bface-727b-46b3-b29f-8e5e2f65f90e")
+        disk = DiskInfo(device="/dev/sda", pttype="gpt", disk_guid="a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d")
         self.assertEqual(disk.device, "/dev/sda")
-        self.assertEqual(disk.disk_guid, "be6bface-727b-46b3-b29f-8e5e2f65f90e")
+        self.assertEqual(disk.disk_guid, "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d")
 
     def test_windows_installation_compatibility(self):
+        """US1-AC4: Detect UEFI vs Legacy BIOS compatibility based on boot files present."""
         p = PartitionInfo(
-            device="/dev/nvme0n1p2",
-            disk="/dev/nvme0n1",
+            device="/dev/sda2",
+            disk="/dev/sda",
             part_num=2,
             fstype="ntfs",
             role=PartitionRole.WINDOWS_OS,
@@ -76,12 +85,13 @@ class TestModels(unittest.TestCase):
         self.assertTrue(win_legacy.is_legacy_compatible())
 
     def test_efi_boot_entry(self):
+        """US5-AC1: Identify Windows Boot Manager entries vs Linux boot entries in NVRAM."""
         entry = EfiBootEntry(
             boot_num="0001",
             label="Windows Boot Manager",
             active=True,
             file_path="\\EFI\\Microsoft\\Boot\\bootmgfw.efi",
-            disk_device="/dev/nvme0n1",
+            disk_device="/dev/sda",
             partition_num=1,
         )
         self.assertTrue(entry.is_windows_manager())
@@ -90,9 +100,9 @@ class TestModels(unittest.TestCase):
 
         non_win = EfiBootEntry(
             boot_num="0002",
-            label="Fedora Linux",
+            label="Linux Bootloader",
             active=True,
-            file_path="\\EFI\\fedora\\shimx64.efi",
+            file_path="\\EFI\\linux\\shimx64.efi",
         )
         self.assertFalse(non_win.is_windows_manager())
 

@@ -6,6 +6,15 @@ from redivivus.deployer import BootDeployer
 from redivivus.models import BootMode
 
 
+"""
+User Story 4 (US4) - Boot Asset Deployment, Backup & Fallback Protection
+As a rescue operator restoring Windows bootability,
+I want Redivivus to copy verified boot assets from the Windows drive to the ESP/Boot partition,
+automatically create timestamped backups of existing Microsoft boot folders,
+and safeguard existing non-Windows fallback loaders (/EFI/Boot/bootx64.efi) from being overwritten.
+"""
+
+
 class TestDeployer(unittest.TestCase):
     def setUp(self):
         self.deployer = BootDeployer()
