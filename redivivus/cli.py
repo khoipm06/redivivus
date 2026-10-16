@@ -643,8 +643,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     # recover
     p_rec = subparsers.add_parser("recover", help="Recover and rebuild Windows bootloader")
-    p_rec.add_argument("--win", type=str, help="Target Windows partition device (e.g. /dev/nvme0n1p2)")
-    p_rec.add_argument("--esp", type=str, help="Target EFI System Partition (e.g. /dev/nvme0n1p1)")
+    p_rec.add_argument("--win", type=str, help="Target Windows partition device (e.g. /dev/sda2)")
+    p_rec.add_argument("--esp", type=str, help="Target EFI System Partition (e.g. /dev/sda1)")
     p_rec.add_argument("--mode", choices=["AUTO", "UEFI", "BIOS"], default="AUTO", help="Boot mode")
     p_rec.add_argument("--dry-run", action="store_true", help="Preview plan without modifying disk")
     p_rec.add_argument("--no-fallback", action="store_true", help="Skip deploying fallback bootx64.efi")
