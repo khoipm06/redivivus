@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "redivivus"
-version = "0.1.0"
+version = "0.1.5"
 description = "Universal Windows Bootloader Recovery Tool from Linux without WinPE"
 readme = "README.md"
 authors = [
