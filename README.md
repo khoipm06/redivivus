@@ -108,42 +108,45 @@ Discovers all block devices, Windows installations, EFI partitions, and firmware
 sudo redivivus scan
 ```
 
-Output format (clean terminal table):
+Output format (example synthetic mock report on generic dual-boot storage):
 ```text
 ================================================================================
-  Redivivus Hardware & Boot Diagnostic Report (v0.1.0)
+  Redivivus Hardware & Boot Diagnostic Report (v0.1.5 - Synthetic Fixture)
 ================================================================================
 
   • Firmware Environment : UEFI
   • Detected Boot Mode   : UEFI
-  • Total Partitions     : 14
+  • Total Partitions     : 3
 
 [ 1. Detected Windows Installations ]
 ┌────────────────┬──────────────┬──────┬────────┬──────────────┬───────────────┐
 │ Device         │ Product      │ UEFI │ Legacy │ BCD-Template │ Mount         │
 ├────────────────┼──────────────┼──────┼────────┼──────────────┼───────────────┤
-│ /dev/nvme0n1p2 │ Windows (NT) │ Yes  │  Yes   │    Found     │ /media/windows│
+│ /dev/sda2      │ Windows 11   │ Yes  │  Yes   │    Found     │ /mnt/windows  │
 └────────────────┴──────────────┴──────┴────────┴──────────────┴───────────────┘
 
 [ 2. Detected EFI System Partitions (ESP) ]
 ┌────────────────┬──────────────┬────────┬────────┬───────┬────────┬───────────┐
 │ Device         │ Disk         │ Part # │ FSType │ Label │   Size │ Mount     │
 ├────────────────┼──────────────┼────────┼────────┼───────┼────────┼───────────┤
-│ /dev/nvme0n1p1 │ /dev/nvme0n1 │   1    │  vfat  │ ESP   │ 275.0M │ /boot/efi │
+│ /dev/sda1      │ /dev/sda     │   1    │  vfat  │ ESP   │ 512.0M │ /boot/efi │
 └────────────────┴──────────────┴────────┴────────┴───────┴────────┴───────────┘
 
 [ 3. UEFI NVRAM Boot Entries ]
 ┌──────────┬────────┬──────────────────────┬──────────────────────┬────────────┐
 │ Boot #   │ Active │ Label                │ File Path            │ Is Windows │
 ├──────────┼────────┼──────────────────────┼──────────────────────┼────────────┤
-│ Boot0000 │   *    │ Fedora               │ \EFI\fedora\shimx64. │     No     │
-│          │        │                      │ efi                  │            │
-│ Boot0005 │   *    │ Windows Boot Manager │ \EFI\Microsoft\Boot\ │    Yes     │
+│ Boot0001 │   *    │ Linux Boot Manager   │ \EFI\systemd\systemd │     No     │
+│          │        │                      │ -bootx64.efi         │            │
+│ Boot0002 │   *    │ Windows Boot Manager │ \EFI\Microsoft\Boot\ │    Yes     │
 │          │        │                      │ bootmgfw.efi         │            │
 └──────────┴────────┴──────────────────────┴──────────────────────┴────────────┘
 
-  • Boot Order: 0005 -> 0000
+  • Boot Order: 0001 -> 0002
 ```
+
+> [!NOTE]
+> The table above is a synthetic mock fixture demonstrating layout and columns. Redivivus dynamically inspects real connected block devices and filesystems at runtime.
 
 For scripting or automated pipelines, output JSON:
 ```bash
@@ -181,14 +184,14 @@ sudo redivivus recover --dry-run
 #### Explicit Target Selection
 When multiple Windows or ESP partitions exist:
 ```bash
-sudo redivivus recover --win /dev/nvme0n1p2 --esp /dev/nvme0n1p1 --mode UEFI -y
+sudo redivivus recover --win /dev/sda2 --esp /dev/sda1 --mode UEFI -y
 ```
 
 #### Available Flags
 | Flag | Description |
 | ---- | ----------- |
-| `--win <dev>` | Specify Windows OS partition (e.g. `/dev/nvme0n1p2`) |
-| `--esp <dev>` | Specify target EFI System Partition (e.g. `/dev/nvme0n1p1`) |
+| `--win <dev>` | Specify Windows OS partition (e.g. `/dev/sda2`) |
+| `--esp <dev>` | Specify target EFI System Partition (e.g. `/dev/sda1`) |
 | `--mode <AUTO\|UEFI\|BIOS>` | Force boot mode (defaults to `AUTO`) |
 | `--dry-run` | Simulate and preview all actions without writing to disk |
 | `--no-fallback` | Skip deploying `\EFI\Boot\bootx64.efi` |
@@ -222,6 +225,28 @@ Redivivus is built with defense-in-depth safety:
 - **Read-Only Probing**: Inspects Windows partitions via read-only mounts.
 - **Automatic Backups**: Preserves prior boot structures prior to modification.
 - **Fail-Safe Checks**: Verifies binary headers and PE32+ structures before marking any operation complete.
+
+---
+
+## CI/CD & Release Workflow
+
+Redivivus uses automated GitHub Actions workflows for continuous integration and releases:
+
+- **Continuous Integration (`.github/workflows/ci.yml`)**:
+  - Automatically triggered on every `push` and `pull_request` to `main`.
+  - Runs full test suite matrix across Python 3.8, 3.9, 3.10, 3.11, 3.12, and 3.13 on `ubuntu-latest`.
+  - Verifies distribution packaging with `python -m build`.
+
+- **Release Flow (`.github/workflows/release.yml`)**:
+  - Automatically triggered when pushing a semantic version tag (e.g. `v0.1.5`).
+  - Builds binary wheels (`.whl`) and source distributions (`.tar.gz`).
+  - Publishes a GitHub Release with auto-generated changelog notes and attaches distribution artifacts.
+
+To cut a new release:
+```bash
+git tag -a v0.1.5 -m "Release v0.1.5"
+git push origin v0.1.5
+```
 
 ---
 
