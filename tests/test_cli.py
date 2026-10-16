@@ -12,6 +12,15 @@ from redivivus.cli import (
     get_terminal_table_width,
     main,
 )
+from redivivus.models import (
+    BootMode,
+    EfiBootEntry,
+    PartitionInfo,
+    PartitionRole,
+    ScanReport,
+    WindowsInstallation,
+)
+from redivivus.scanner import SystemScanner
 
 
 """
@@ -19,6 +28,92 @@ User Story 6 (US6) - CLI Interface, Pretty Printing & Safety Guards
 Verify command-line parsing, terminal table formatting, JSON serialization,
 and root privilege enforcement for non-destructive operations.
 """
+
+
+def _create_mock_scan_report(has_windows: bool = True, has_esp: bool = True, uefi: bool = True) -> ScanReport:
+    """Creates a deterministic synthetic scan report representing universal hardware."""
+    partitions = []
+    esp_partitions = []
+    win_installations = []
+    nvram_entries = []
+
+    if has_esp:
+        esp = PartitionInfo(
+            device="/dev/sda1",
+            disk="/dev/sda",
+            part_num=1,
+            fstype="vfat",
+            label="ESP",
+            uuid="A1B2-C3D4",
+            part_uuid="c12a7328-f81f-11d2-ba4b-00a0c93ec93b",
+            size_bytes=536870912,
+            size_human="512.0M",
+            mount_point="/boot/efi",
+            is_mounted=True,
+            is_esp=True,
+            pttype="gpt",
+            role=PartitionRole.ESP,
+            disk_guid="a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d",
+            partition_offset=1048576,
+        )
+        partitions.append(esp)
+        esp_partitions.append(esp)
+
+    if has_windows:
+        win_part = PartitionInfo(
+            device="/dev/sda2",
+            disk="/dev/sda",
+            part_num=2,
+            fstype="ntfs",
+            label="Windows 11",
+            uuid="4E1A2B3C4D5E6F70",
+            part_uuid="550e8400-e29b-41d4-a716-446655440000",
+            size_bytes=107374182400,
+            size_human="100.0G",
+            mount_point="/mnt/windows",
+            is_mounted=True,
+            pttype="gpt",
+            role=PartitionRole.WINDOWS_OS,
+            disk_guid="a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d",
+            partition_offset=1074790400,
+        )
+        partitions.append(win_part)
+        win_inst = WindowsInstallation(
+            partition=win_part,
+            product_name="Windows 11",
+            has_efi_boot_files=True,
+            has_pcat_boot_files=True,
+            has_bcd_template=True,
+            winload_efi_present=True,
+            winload_exe_present=True,
+        )
+        win_installations.append(win_inst)
+
+    if uefi:
+        nvram_entries = [
+            EfiBootEntry(
+                boot_num="0001",
+                label="Linux Boot Manager",
+                active=True,
+                file_path=r"\EFI\systemd\systemd-bootx64.efi",
+            ),
+            EfiBootEntry(
+                boot_num="0002",
+                label="Windows Boot Manager",
+                active=True,
+                file_path=r"\EFI\Microsoft\Boot\bootmgfw.efi",
+            ),
+        ]
+
+    return ScanReport(
+        firmware_uefi=uefi,
+        system_boot_mode=BootMode.UEFI if uefi else BootMode.BIOS,
+        partitions=partitions,
+        windows_installations=win_installations,
+        esp_partitions=esp_partitions,
+        nvram_entries=nvram_entries,
+        current_boot_order=["0001", "0002"] if uefi else [],
+    )
 
 
 class TestCli(unittest.TestCase):
@@ -121,17 +216,23 @@ class TestCli(unittest.TestCase):
         self.assertFalse(args_def.force_fallback)
         self.assertFalse(args_def.set_first)
 
-    def test_cli_scan_json(self):
+    @patch.object(SystemScanner, "run_full_scan", return_value=_create_mock_scan_report())
+    def test_cli_scan_json(self, _mock_scan):
+        """US6-AC2: CLI scan --json outputs valid JSON structure from universal scan report."""
         buf = io.StringIO()
         with redirect_stdout(buf):
             ret = main(["scan", "--json"])
         self.assertEqual(ret, 0)
         output = buf.getvalue()
         data = json.loads(output)
-        self.assertIn("firmware_uefi", data)
-        self.assertIn("partitions", data)
+        self.assertTrue(data["firmware_uefi"])
+        self.assertEqual(len(data["partitions"]), 2)
+        self.assertEqual(data["partitions"][0]["device"], "/dev/sda1")
+        self.assertEqual(data["partitions"][1]["device"], "/dev/sda2")
 
-    def test_cli_scan_cli_format(self):
+    @patch.object(SystemScanner, "run_full_scan", return_value=_create_mock_scan_report())
+    def test_cli_scan_cli_format(self, _mock_scan):
+        """US6-AC2: CLI scan prints clean terminal tables with box borders on universal mock."""
         buf = io.StringIO()
         with redirect_stdout(buf):
             ret = main(["scan"])
@@ -145,19 +246,32 @@ class TestCli(unittest.TestCase):
         self.assertIn("Redivivus Hardware & Boot Diagnostic Report", output)
         self.assertIn("┌", output)
         self.assertIn("└", output)
+        self.assertIn("/dev/sda2", output)
+        self.assertIn("/dev/sda1", output)
 
-    def test_cli_diagnose(self):
+    @patch.object(SystemScanner, "run_full_scan", return_value=_create_mock_scan_report())
+    def test_cli_diagnose_healthy(self, _mock_scan):
+        """US6-AC3: CLI diagnose returns 0 when all boot components are healthy."""
         buf = io.StringIO()
         with redirect_stdout(buf):
             ret = main(["diagnose"])
-        # Should complete and print report
-        self.assertIn(ret, (0, 1))
+        self.assertEqual(ret, 0)
         self.assertIn("Redivivus", buf.getvalue())
-        # Verify no markdown H1/H2
+        self.assertIn("Diagnosis completed", buf.getvalue())
         self.assertNotIn("# Redivivus Bootability", buf.getvalue())
 
-    def test_cli_recover_permission_check(self):
-        # Non-root user running recover without dry-run should prompt or fail gracefully
+    @patch.object(SystemScanner, "run_full_scan", return_value=_create_mock_scan_report(has_windows=False))
+    def test_cli_diagnose_missing_windows(self, _mock_scan):
+        """US6-AC3: CLI diagnose detects missing Windows and exits with error code 1."""
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            ret = main(["diagnose"])
+        self.assertEqual(ret, 1)
+        self.assertIn("No Windows installation was detected", buf.getvalue())
+
+    @patch.object(SystemScanner, "run_full_scan", return_value=_create_mock_scan_report())
+    def test_cli_recover_permission_check(self, _mock_scan):
+        """US6-AC4: Non-root user running recover without dry-run is blocked."""
         with patch("os.geteuid", return_value=1000):
             with patch("sys.stdin.isatty", return_value=False):
                 buf = io.StringIO()
@@ -168,8 +282,9 @@ class TestCli(unittest.TestCase):
                 self.assertIn("Root privileges are required", output)
                 self.assertIn("sudo", output)
 
-    def test_cli_recover_dry_run_non_root(self):
-        # Non-root user running recover WITH --dry-run should succeed
+    @patch.object(SystemScanner, "run_full_scan", return_value=_create_mock_scan_report())
+    def test_cli_recover_dry_run_non_root(self, _mock_scan):
+        """US6-AC4: Non-root user running recover --dry-run previews plan safely."""
         with patch("os.geteuid", return_value=1000):
             buf = io.StringIO()
             with redirect_stdout(buf):
@@ -177,6 +292,17 @@ class TestCli(unittest.TestCase):
             output = buf.getvalue()
             self.assertIn("Dry-run preview complete", output)
             self.assertEqual(ret, 0)
+
+    @patch.object(SystemScanner, "run_full_scan", return_value=_create_mock_scan_report(has_windows=False))
+    def test_cli_recover_no_windows_detected(self, _mock_scan):
+        """US6-AC4: Recovery aborts gracefully with 1 if no Windows installation exists."""
+        with patch("os.geteuid", return_value=0):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                ret = main(["recover", "--dry-run"])
+            output = buf.getvalue()
+            self.assertIn("No Windows installations detected", output)
+            self.assertEqual(ret, 1)
 
 
 if __name__ == "__main__":
